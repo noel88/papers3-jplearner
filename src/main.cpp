@@ -1,36 +1,59 @@
 #include <Arduino.h>
-#include <M5GFX.h>
+#include <M5Unified.h>
 #include <SD.h>
 #include <SPI.h>
 #include <LittleFS.h>
-#include <I2C_BM8563.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
 
 // ============================================
 // Hardware Configuration
 // ============================================
-static M5GFX display;
-I2C_BM8563 rtc(I2C_BM8563_DEFAULT_ADDRESS, Wire);
 AsyncWebServer server(80);
 
-// M5Paper S3 SD Card pins
-#define SD_CS   4
-#define SD_SCK  36
-#define SD_MISO 35
-#define SD_MOSI 37
+// M5Paper S3 SD Card pins (correct pinout)
+#define SD_CS   47
+#define SD_SCK  39
+#define SD_MISO 40
+#define SD_MOSI 38
 
 // ============================================
 // Constants
 // ============================================
 const int SCREEN_WIDTH = 960;
 const int SCREEN_HEIGHT = 540;
-const int TAB_BAR_HEIGHT = 70;
+const int TAB_BAR_HEIGHT = 60;
 const int CONTENT_HEIGHT = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+const int CONTENT_Y = 0;  // Content starts at top
 
 const int PAD_X = 30;
-const int PAD_Y = 30;
+const int PAD_Y = 20;
 const int LINE_SPACING = 16;
+
+// Tab configuration
+const int TAB_COUNT = 6;
+const int BATTERY_WIDTH = 80;
+const int TAB_WIDTH = (SCREEN_WIDTH - BATTERY_WIDTH) / TAB_COUNT;  // ~146px each
+
+// Tab indices
+enum TabIndex {
+    TAB_WORD = 0,      // 단어
+    TAB_GRAMMAR = 1,   // 문형
+    TAB_COPY = 2,      // 필사
+    TAB_READ = 3,      // 읽기
+    TAB_STATS = 4,     // 통계
+    TAB_SETTINGS = 5   // 설정
+};
+
+const char* TAB_LABELS[] = {
+    "단어",
+    "문형",
+    "필사",
+    "읽기",
+    "통계",
+    "설정"
+};
 
 // SD Card directories
 const char* DIR_BOOKS = "/books";
@@ -38,22 +61,73 @@ const char* DIR_DICT = "/dict";
 const char* DIR_FONTS = "/fonts";
 const char* DIR_USERDATA = "/userdata";
 
-// WiFi AP Settings
-const char* AP_SSID = "Papers3-JP";
-const char* AP_PASS = "12345678";
+// Config file path (stored in internal LittleFS)
+const char* CONFIG_PATH = "/config.json";
+
+// ============================================
+// Configuration Structure
+// ============================================
+struct Config {
+    // Language
+    String language = "ko";
+
+    // Learning settings
+    int newCardsPerDay = 20;
+    int reviewLimit = -1;  // -1 = unlimited
+
+    // Display settings
+    String fontSize = "medium";  // small, medium, large
+    String startScreen = "copy"; // word, grammar, copy, read
+
+    // System settings
+    int sleepMinutes = 5;
+
+    // WiFi AP settings (for file transfer)
+    String apSsid = "Papers3-JP";
+    String apPassword = "12345678";
+
+    // WiFi Station settings (for external connection)
+    String staSsid = "";
+    String staPassword = "";
+    bool autoConnect = false;
+} config;
+
+// Settings menu state
+enum SettingsMenuState {
+    SETTINGS_MAIN,
+    SETTINGS_WIFI_AP,
+    SETTINGS_WIFI_STA,
+    SETTINGS_DISPLAY,
+    SETTINGS_LEARNING,
+    SETTINGS_SYSTEM
+};
+
+SettingsMenuState settingsState = SETTINGS_MAIN;
 
 // ============================================
 // State
 // ============================================
 bool sdCardMounted = false;
 bool wifiMode = false;
+TabIndex currentTab = TAB_COPY;  // Start with 필사 (transcription)
+bool needsFullRedraw = true;
+bool needsTabRedraw = false;
+
+// 필사 (Copy/Transcription) state
 std::vector<String> sentences;
 String todayTitle = "";
 String todayAuthor = "";
 String todayDate = "";
 int currentPage = -1;
+
+// WiFi state
 String currentUploadPath = "";
 File uploadFile;
+
+// Battery state
+int batteryPercent = 100;
+unsigned long lastBatteryCheck = 0;
+const unsigned long BATTERY_CHECK_INTERVAL = 60000;  // Check every minute
 
 // ============================================
 // HTML Page
@@ -188,6 +262,23 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
         </div>
     </div>
 
+    <div class="card">
+        <h2>WiFi Settings</h2>
+        <div style="margin-bottom: 15px;">
+            <label><strong>AP Mode (File Transfer)</strong></label>
+            <input type="text" id="apSsid" placeholder="AP SSID" style="width:100%;padding:8px;margin:5px 0;">
+            <input type="text" id="apPass" placeholder="AP Password" style="width:100%;padding:8px;margin:5px 0;">
+            <button onclick="saveApSettings()" style="background:#17a2b8;">Save AP Settings</button>
+        </div>
+        <div style="margin-top:20px;">
+            <label><strong>External WiFi (for future sync)</strong></label>
+            <input type="text" id="staSsid" placeholder="WiFi SSID" style="width:100%;padding:8px;margin:5px 0;">
+            <input type="password" id="staPass" placeholder="WiFi Password" style="width:100%;padding:8px;margin:5px 0;">
+            <button onclick="saveStaSettings()" style="background:#17a2b8;">Save WiFi Settings</button>
+        </div>
+        <div id="wifiStatus"></div>
+    </div>
+
     <div class="card" style="text-align: center;">
         <button onclick="exitWifi()" style="background: #6c757d;">Exit WiFi Mode</button>
     </div>
@@ -310,8 +401,69 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
             document.body.innerHTML = '<h1 style="text-align:center;margin-top:100px;">Restarting...</h1>';
         }
 
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const cfg = await res.json();
+                document.getElementById('apSsid').value = cfg.apSsid || '';
+                document.getElementById('apPass').value = cfg.apPass || '';
+                document.getElementById('staSsid').value = cfg.staSsid || '';
+                document.getElementById('staPass').value = cfg.staPass || '';
+            } catch(e) {
+                console.error('Failed to load config');
+            }
+        }
+
+        async function saveApSettings() {
+            const ssid = document.getElementById('apSsid').value;
+            const pass = document.getElementById('apPass').value;
+            const status = document.getElementById('wifiStatus');
+
+            if (ssid.length < 1 || pass.length < 8) {
+                status.innerHTML = '<div class="status error">SSID required, password min 8 chars</div>';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/config/ap', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ssid, password: pass})
+                });
+                if (res.ok) {
+                    status.innerHTML = '<div class="status success">AP settings saved! Restart to apply.</div>';
+                } else {
+                    status.innerHTML = '<div class="status error">Failed to save</div>';
+                }
+            } catch(e) {
+                status.innerHTML = '<div class="status error">Error: ' + e.message + '</div>';
+            }
+        }
+
+        async function saveStaSettings() {
+            const ssid = document.getElementById('staSsid').value;
+            const pass = document.getElementById('staPass').value;
+            const status = document.getElementById('wifiStatus');
+
+            try {
+                const res = await fetch('/api/config/sta', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ssid, password: pass})
+                });
+                if (res.ok) {
+                    status.innerHTML = '<div class="status success">WiFi settings saved!</div>';
+                } else {
+                    status.innerHTML = '<div class="status error">Failed to save</div>';
+                }
+            } catch(e) {
+                status.innerHTML = '<div class="status error">Error: ' + e.message + '</div>';
+            }
+        }
+
         loadInfo();
         loadFiles();
+        loadConfig();
     </script>
 </body>
 </html>
@@ -321,12 +473,16 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
 // SD Card Functions
 // ============================================
 bool initSDCard() {
+    Serial.println("  SPI.begin...");
     SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    yield();
 
+    Serial.println("  SD.begin...");
     if (!SD.begin(SD_CS, SPI, 25000000)) {
         Serial.println("SD Card mount failed");
         return false;
     }
+    Serial.println("  SD.begin OK");
 
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
@@ -364,27 +520,247 @@ bool ensureDirectories() {
 }
 
 void showSDCardError(const char* message) {
-    display.fillScreen(TFT_WHITE);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.setTextColor(TFT_BLACK);
 
     int centerY = CONTENT_HEIGHT / 2;
 
-    display.setCursor(PAD_X, centerY - 40);
-    display.setTextSize(1.5);
-    display.println("SD Card Error");
+    M5.Display.setCursor(PAD_X, centerY - 40);
+    M5.Display.setTextSize(1.0);
+    M5.Display.println("SD Card Error");
 
-    display.setCursor(PAD_X, centerY + 20);
-    display.setTextSize(1.0);
-    display.println(message);
+    M5.Display.setCursor(PAD_X, centerY + 20);
+    M5.Display.setTextSize(1.0);
+    M5.Display.println(message);
 
-    display.setCursor(PAD_X, centerY + 60);
-    display.println("Please insert SD card and restart.");
+    M5.Display.setCursor(PAD_X, centerY + 60);
+    M5.Display.println("Please insert SD card and restart.");
 
-    display.display();
+    M5.Display.display();
 }
 
 uint64_t getSDCardFreeSpace() {
     return SD.totalBytes() - SD.usedBytes();
+}
+
+// ============================================
+// Configuration Functions
+// ============================================
+bool loadConfig() {
+    if (!LittleFS.exists(CONFIG_PATH)) {
+        Serial.println("Config file not found, using defaults");
+        return false;
+    }
+
+    File f = LittleFS.open(CONFIG_PATH, "r");
+    if (!f) {
+        Serial.println("Failed to open config file");
+        return false;
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, f);
+    f.close();
+
+    if (error) {
+        Serial.printf("Config parse error: %s\n", error.c_str());
+        return false;
+    }
+
+    // Language
+    config.language = doc["language"] | "ko";
+
+    // Learning
+    config.newCardsPerDay = doc["learning"]["newCardsPerDay"] | 20;
+    config.reviewLimit = doc["learning"]["reviewLimit"] | -1;
+
+    // Display
+    config.fontSize = doc["display"]["fontSize"] | "medium";
+    config.startScreen = doc["display"]["startScreen"] | "copy";
+
+    // System
+    config.sleepMinutes = doc["system"]["sleepMinutes"] | 5;
+
+    // WiFi AP
+    config.apSsid = doc["wifi"]["ap"]["ssid"] | "Papers3-JP";
+    config.apPassword = doc["wifi"]["ap"]["password"] | "12345678";
+
+    // WiFi Station
+    config.staSsid = doc["wifi"]["station"]["ssid"] | "";
+    config.staPassword = doc["wifi"]["station"]["password"] | "";
+    config.autoConnect = doc["wifi"]["station"]["autoConnect"] | false;
+
+    Serial.println("Config loaded successfully");
+    return true;
+}
+
+bool saveConfig() {
+    JsonDocument doc;
+
+    // Language
+    doc["language"] = config.language;
+
+    // Learning
+    doc["learning"]["newCardsPerDay"] = config.newCardsPerDay;
+    doc["learning"]["reviewLimit"] = config.reviewLimit;
+
+    // Display
+    doc["display"]["fontSize"] = config.fontSize;
+    doc["display"]["startScreen"] = config.startScreen;
+
+    // System
+    doc["system"]["sleepMinutes"] = config.sleepMinutes;
+
+    // WiFi AP
+    doc["wifi"]["ap"]["ssid"] = config.apSsid;
+    doc["wifi"]["ap"]["password"] = config.apPassword;
+
+    // WiFi Station
+    doc["wifi"]["station"]["ssid"] = config.staSsid;
+    doc["wifi"]["station"]["password"] = config.staPassword;
+    doc["wifi"]["station"]["autoConnect"] = config.autoConnect;
+
+    File f = LittleFS.open(CONFIG_PATH, "w");
+    if (!f) {
+        Serial.println("Failed to create config file");
+        return false;
+    }
+
+    serializeJsonPretty(doc, f);
+    f.close();
+
+    Serial.println("Config saved successfully");
+    return true;
+}
+
+// ============================================
+// Battery Functions
+// ============================================
+int readBatteryPercent() {
+    // M5Paper S3 battery voltage reading
+    // Battery pin is typically GPIO10 on M5Paper S3
+    // Full charge ~4.2V, Empty ~3.0V
+    // Using voltage divider, ADC reads half of actual voltage
+
+    int adcValue = analogRead(10);
+    float voltage = (adcValue / 4095.0) * 3.3 * 2;  // Voltage divider factor
+
+    // Convert voltage to percentage (3.0V = 0%, 4.2V = 100%)
+    int percent = (int)((voltage - 3.0) / (4.2 - 3.0) * 100);
+    percent = constrain(percent, 0, 100);
+
+    return percent;
+}
+
+void updateBattery() {
+    unsigned long now = millis();
+    if (now - lastBatteryCheck >= BATTERY_CHECK_INTERVAL || lastBatteryCheck == 0) {
+        batteryPercent = readBatteryPercent();
+        lastBatteryCheck = now;
+        needsTabRedraw = true;
+    }
+}
+
+// ============================================
+// Tab Bar Functions
+// ============================================
+void drawTabBar() {
+    int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+
+    // Draw tab bar background
+    M5.Display.fillRect(0, tabY, SCREEN_WIDTH, TAB_BAR_HEIGHT, TFT_WHITE);
+
+    // Draw top border line
+    M5.Display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
+
+    // Draw each tab
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(0.8);  // Scale down for tab bar
+
+    for (int i = 0; i < TAB_COUNT; i++) {
+        int tabX = i * TAB_WIDTH;
+
+        // Highlight current tab
+        if (i == currentTab) {
+            M5.Display.fillRect(tabX + 2, tabY + 2, TAB_WIDTH - 4, TAB_BAR_HEIGHT - 4, TFT_BLACK);
+            M5.Display.setTextColor(TFT_WHITE);
+        } else {
+            M5.Display.setTextColor(TFT_BLACK);
+        }
+
+        // Draw tab label centered
+        int labelWidth = M5.Display.textWidth(TAB_LABELS[i]);
+        int labelX = tabX + (TAB_WIDTH - labelWidth) / 2;
+        int labelY = tabY + (TAB_BAR_HEIGHT - M5.Display.fontHeight()) / 2;
+
+        M5.Display.setCursor(labelX, labelY);
+        M5.Display.print(TAB_LABELS[i]);
+
+        // Draw vertical separator (except for last tab)
+        if (i < TAB_COUNT - 1) {
+            M5.Display.drawLine(tabX + TAB_WIDTH, tabY + 8, tabX + TAB_WIDTH, tabY + TAB_BAR_HEIGHT - 8, 0x7BEF);  // Gray color
+        }
+    }
+
+    // Reset text color
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Draw battery indicator
+    int battX = TAB_COUNT * TAB_WIDTH + 10;
+    int battY = tabY + (TAB_BAR_HEIGHT - 24) / 2;
+
+    // Battery icon outline
+    M5.Display.drawRect(battX, battY, 40, 24, TFT_BLACK);
+    M5.Display.fillRect(battX + 40, battY + 6, 4, 12, TFT_BLACK);  // Battery tip
+
+    // Battery fill level
+    int fillWidth = (36 * batteryPercent) / 100;
+    if (fillWidth > 0) {
+        M5.Display.fillRect(battX + 2, battY + 2, fillWidth, 20, TFT_BLACK);
+    }
+
+    // Battery percentage text
+    M5.Display.setFont(&fonts::Font2);
+    char battText[8];
+    sprintf(battText, "%d%%", batteryPercent);
+    M5.Display.setCursor(battX + 48, battY + 4);
+    M5.Display.print(battText);
+
+    // Reset font
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
+}
+
+int handleTabTouch(int touchX, int touchY) {
+    int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+
+    // Check if touch is in tab bar area
+    if (touchY < tabY) {
+        return -1;  // Not in tab bar
+    }
+
+    // Check which tab was touched
+    for (int i = 0; i < TAB_COUNT; i++) {
+        int tabX = i * TAB_WIDTH;
+        if (touchX >= tabX && touchX < tabX + TAB_WIDTH) {
+            return i;
+        }
+    }
+
+    return -1;  // Touch in battery area or outside tabs
+}
+
+void switchTab(TabIndex newTab) {
+    if (newTab != currentTab) {
+        // Reset settings menu state when leaving settings tab
+        if (currentTab == TAB_SETTINGS) {
+            settingsState = SETTINGS_MAIN;
+        }
+
+        currentTab = newTab;
+        needsFullRedraw = true;
+        Serial.printf("Switched to tab: %s\n", TAB_LABELS[newTab]);
+    }
 }
 
 // ============================================
@@ -478,6 +854,65 @@ void setupWebServer() {
         ESP.restart();
     });
 
+    // API: Get config
+    server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String json = "{";
+        json += "\"apSsid\":\"" + config.apSsid + "\",";
+        json += "\"apPass\":\"" + config.apPassword + "\",";
+        json += "\"staSsid\":\"" + config.staSsid + "\",";
+        json += "\"staPass\":\"" + config.staPassword + "\"";
+        json += "}";
+        request->send(200, "application/json", json);
+    });
+
+    // API: Save AP config
+    server.on("/api/config/ap", HTTP_POST, [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            DeserializationError error = deserializeJson(doc, body);
+
+            if (error) {
+                request->send(400, "text/plain", "Invalid JSON");
+                return;
+            }
+
+            config.apSsid = doc["ssid"] | config.apSsid;
+            config.apPassword = doc["password"] | config.apPassword;
+
+            if (saveConfig()) {
+                request->send(200, "text/plain", "OK");
+            } else {
+                request->send(500, "text/plain", "Failed to save");
+            }
+        }
+    );
+
+    // API: Save Station config
+    server.on("/api/config/sta", HTTP_POST, [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            DeserializationError error = deserializeJson(doc, body);
+
+            if (error) {
+                request->send(400, "text/plain", "Invalid JSON");
+                return;
+            }
+
+            config.staSsid = doc["ssid"] | config.staSsid;
+            config.staPassword = doc["password"] | config.staPassword;
+
+            if (saveConfig()) {
+                request->send(200, "text/plain", "OK");
+            } else {
+                request->send(500, "text/plain", "Failed to save");
+            }
+        }
+    );
+
     server.begin();
     Serial.println("Web server started");
 }
@@ -485,9 +920,9 @@ void setupWebServer() {
 void startWiFiMode() {
     wifiMode = true;
 
-    // Start AP mode
+    // Start AP mode using config values
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASS);
+    WiFi.softAP(config.apSsid.c_str(), config.apPassword.c_str());
 
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
@@ -496,43 +931,43 @@ void startWiFiMode() {
     setupWebServer();
 
     // Display WiFi info
-    display.fillScreen(TFT_WHITE);
-    display.setTextColor(TFT_BLACK);
-    display.setTextSize(1.5);
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextSize(1.0);
 
     int y = PAD_Y;
-    display.setCursor(PAD_X, y);
-    display.println("WiFi File Transfer Mode");
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("WiFi File Transfer Mode");
     y += 60;
 
-    display.setTextSize(1.2);
-    display.setCursor(PAD_X, y);
-    display.println("1. Connect to WiFi:");
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("1. Connect to WiFi:");
     y += 40;
 
-    display.setTextSize(1.4);
-    display.setCursor(PAD_X + 40, y);
-    display.printf("SSID: %s", AP_SSID);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X + 40, y);
+    M5.Display.printf("SSID: %s", config.apSsid.c_str());
     y += 35;
-    display.setCursor(PAD_X + 40, y);
-    display.printf("Pass: %s", AP_PASS);
+    M5.Display.setCursor(PAD_X + 40, y);
+    M5.Display.printf("Pass: %s", config.apPassword.c_str());
     y += 50;
 
-    display.setTextSize(1.2);
-    display.setCursor(PAD_X, y);
-    display.println("2. Open browser:");
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("2. Open browser:");
     y += 40;
 
-    display.setTextSize(1.4);
-    display.setCursor(PAD_X + 40, y);
-    display.printf("http://%s", IP.toString().c_str());
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X + 40, y);
+    M5.Display.printf("http://%s", IP.toString().c_str());
     y += 60;
 
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X, y);
-    display.println("Touch screen to exit WiFi mode");
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("Touch screen to exit WiFi mode");
 
-    display.display();
+    M5.Display.display();
 }
 
 void stopWiFiMode() {
@@ -547,15 +982,12 @@ void stopWiFiMode() {
 // Content Loading (Temporary - will be replaced with epub)
 // ============================================
 bool loadTodaySentences() {
-    Wire.begin(41, 42);
-    rtc.begin();
-
-    I2C_BM8563_DateTypeDef date;
-    rtc.getDate(&date);
+    // Get date from M5Unified RTC
+    auto dt = M5.Rtc.getDateTime();
 
     char target[8];
-    sprintf(target, "#%02d%02d", date.month, date.date);
-    todayDate = String(date.month) + "月" + String(date.date) + "日";
+    sprintf(target, "#%02d%02d", dt.date.month, dt.date.date);
+    todayDate = String(dt.date.month) + "月" + String(dt.date.date) + "日";
 
     // Try SD card first, then LittleFS as fallback
     File f;
@@ -596,10 +1028,245 @@ bool loadTodaySentences() {
 }
 
 // ============================================
+// Tab Content Drawing Functions
+// ============================================
+void drawPlaceholderContent(const char* tabName, const char* description) {
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Title - centered
+    int titleWidth = M5.Display.textWidth(tabName);
+    M5.Display.setCursor((SCREEN_WIDTH - titleWidth) / 2, CONTENT_HEIGHT / 2 - 40);
+    M5.Display.print(tabName);
+
+    // Description - centered
+    int descWidth = M5.Display.textWidth(description);
+    M5.Display.setCursor((SCREEN_WIDTH - descWidth) / 2, CONTENT_HEIGHT / 2 + 20);
+    M5.Display.print(description);
+}
+
+void drawWordTab() {
+    drawPlaceholderContent("단어 학습", "Coming soon - SRS 단어 학습");
+}
+
+void drawGrammarTab() {
+    drawPlaceholderContent("문형 학습", "Coming soon - N2/N1 문법 패턴");
+}
+
+void drawStatsTab() {
+    drawPlaceholderContent("학습 통계", "Coming soon - 학습 진행 현황");
+}
+
+// Settings menu item structure
+struct SettingsMenuItem {
+    const char* label;
+    const char* value;
+    int y;
+    int height;
+};
+
+const int SETTINGS_ITEM_HEIGHT = 55;
+const int SETTINGS_ITEMS_START_Y = 60;
+
+void drawSettingsMainMenu() {
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Title
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    M5.Display.print("설정");
+
+    // Divider
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    M5.Display.setTextSize(1.0);
+    int y = SETTINGS_ITEMS_START_Y;
+
+    // Menu items
+    const char* menuItems[] = {
+        "WiFi 파일 전송",
+        "WiFi 연결 설정",
+        "화면 설정",
+        "학습 설정",
+        "시스템 설정",
+        "SD 카드 정보"
+    };
+
+    for (int i = 0; i < 6; i++) {
+        // Draw item background (alternating)
+        if (i % 2 == 0) {
+            M5.Display.fillRect(0, y, SCREEN_WIDTH, SETTINGS_ITEM_HEIGHT - 1, 0xF7BE);  // Light gray
+        }
+
+        // Draw item label
+        M5.Display.setCursor(PAD_X, y + 15);
+        M5.Display.print(menuItems[i]);
+
+        // Draw arrow
+        M5.Display.setCursor(SCREEN_WIDTH - 60, y + 15);
+        M5.Display.print(">");
+
+        // Draw bottom border
+        M5.Display.drawLine(PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, SCREEN_WIDTH - PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, 0xDEDB);
+
+        y += SETTINGS_ITEM_HEIGHT;
+    }
+
+    // SD Card info at bottom
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 30);
+    M5.Display.printf("SD: %llu MB free / %llu MB total",
+        getSDCardFreeSpace() / (1024 * 1024),
+        SD.totalBytes() / (1024 * 1024));
+
+    M5.Display.setFont(&fonts::efontKR_24);
+}
+
+void drawWiFiAPSettings() {
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Title with back button
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    M5.Display.print("< WiFi 파일 전송");
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    M5.Display.setTextSize(1.0);
+    int y = SETTINGS_ITEMS_START_Y + 10;
+
+    // Current AP settings
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("현재 설정:");
+    y += 40;
+
+    M5.Display.setCursor(PAD_X + 20, y);
+    M5.Display.printf("SSID: %s", config.apSsid.c_str());
+    y += 35;
+
+    M5.Display.setCursor(PAD_X + 20, y);
+    M5.Display.printf("비밀번호: %s", config.apPassword.c_str());
+    y += 50;
+
+    // Start button
+    int btnY = y + 20;
+    int btnW = 300;
+    int btnH = 60;
+    int btnX = (SCREEN_WIDTH - btnW) / 2;
+
+    M5.Display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(1.0);
+
+    int textW = M5.Display.textWidth("파일 전송 시작");
+    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
+    M5.Display.print("파일 전송 시작");
+
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextSize(1.0);
+
+    // Instructions
+    y = btnY + btnH + 30;
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("1. Start file transfer");
+    y += 25;
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.printf("2. Connect to WiFi '%s'", config.apSsid.c_str());
+    y += 25;
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("3. Open http://192.168.4.1 in browser");
+
+    M5.Display.setFont(&fonts::efontKR_24);
+}
+
+void drawWiFiSTASettings() {
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Title with back button
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    M5.Display.print("< WiFi 연결 설정");
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    M5.Display.setTextSize(1.0);
+    int y = SETTINGS_ITEMS_START_Y + 10;
+
+    // Current Station settings
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("외부 WiFi 연결:");
+    y += 40;
+
+    if (config.staSsid.length() > 0) {
+        M5.Display.setCursor(PAD_X + 20, y);
+        M5.Display.printf("SSID: %s", config.staSsid.c_str());
+        y += 35;
+
+        M5.Display.setCursor(PAD_X + 20, y);
+        M5.Display.print("상태: 설정됨");
+    } else {
+        M5.Display.setCursor(PAD_X + 20, y);
+        M5.Display.print("설정된 네트워크 없음");
+    }
+    y += 50;
+
+    // Scan button
+    int btnY = y + 20;
+    int btnW = 250;
+    int btnH = 50;
+    int btnX = (SCREEN_WIDTH - btnW) / 2;
+
+    M5.Display.drawRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    M5.Display.setTextSize(1.1);
+
+    int textW = M5.Display.textWidth("WiFi 스캔");
+    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 12);
+    M5.Display.print("WiFi 스캔");
+
+    M5.Display.setTextSize(1.0);
+
+    // Note
+    y = btnY + btnH + 40;
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("Note: WiFi scan feature coming soon.");
+    y += 25;
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("Currently use AP mode for file transfer.");
+
+    M5.Display.setFont(&fonts::efontKR_24);
+}
+
+void drawSettingsTab() {
+    switch (settingsState) {
+        case SETTINGS_MAIN:
+            drawSettingsMainMenu();
+            break;
+        case SETTINGS_WIFI_AP:
+            drawWiFiAPSettings();
+            break;
+        case SETTINGS_WIFI_STA:
+            drawWiFiSTASettings();
+            break;
+        default:
+            drawSettingsMainMenu();
+            break;
+    }
+}
+
+// ============================================
 // Display Functions
 // ============================================
 int printWrapped(const String& text, int x, int y, int maxW) {
-    int fontH = display.fontHeight();
+    int fontH = M5.Display.fontHeight();
     int bytePos = 0;
     int byteLen = text.length();
 
@@ -615,7 +1282,7 @@ int printWrapped(const String& text, int x, int y, int maxW) {
             else if (c >= 0xC0) charBytes = 2;
 
             String ch = text.substring(lineEnd, lineEnd + charBytes);
-            int chW = display.textWidth(ch.c_str());
+            int chW = M5.Display.textWidth(ch.c_str());
 
             if (lineWidth + chW > maxW) break;
             lineWidth += chW;
@@ -624,8 +1291,8 @@ int printWrapped(const String& text, int x, int y, int maxW) {
 
         if (lineEnd == bytePos) lineEnd += 1;
 
-        display.setCursor(x, y);
-        display.print(text.substring(bytePos, lineEnd));
+        M5.Display.setCursor(x, y);
+        M5.Display.print(text.substring(bytePos, lineEnd));
         bytePos = lineEnd;
 
         if (bytePos < byteLen) {
@@ -635,94 +1302,214 @@ int printWrapped(const String& text, int x, int y, int maxW) {
     return y + fontH;
 }
 
-void showTitlePage() {
-    display.fillScreen(TFT_WHITE);
-    int contentW = display.width() - PAD_X * 2;
+void drawCopyTitlePage() {
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    int contentW = SCREEN_WIDTH - PAD_X * 2;
     int y = PAD_Y;
-    int fontH = display.fontHeight();
 
-    display.setCursor(PAD_X, y);
-    display.println(todayDate);
+    // Japanese font for Japanese content
+    M5.Display.setFont(&fonts::efontJA_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    int fontH = M5.Display.fontHeight();
+
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println(todayDate);  // 1月1日 format
     y += fontH + 16;
 
-    display.drawLine(PAD_X, y, display.width() - PAD_X, y, TFT_BLACK);
+    M5.Display.drawLine(PAD_X, y, SCREEN_WIDTH - PAD_X, y, TFT_BLACK);
     y += 20;
 
     y = printWrapped(todayTitle, PAD_X, y, contentW);
     y += 16;
 
-    display.setCursor(PAD_X, y);
-    display.println(todayAuthor);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println(todayAuthor);
 
     int totalPages = sentences.size() + 1;
-    display.setCursor(display.width() - 120, CONTENT_HEIGHT - PAD_Y);
-    display.printf("1 / %d", totalPages);
-    display.display();
+    M5.Display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
+    M5.Display.printf("1 / %d", totalPages);
 }
 
-void showPage(int idx) {
-    display.fillScreen(TFT_WHITE);
+void drawCopyContentPage(int idx) {
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
 
-    int contentW = display.width() - PAD_X * 2;
+    // Japanese font for Japanese content
+    M5.Display.setFont(&fonts::efontJA_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    int contentW = SCREEN_WIDTH - PAD_X * 2;
     printWrapped(sentences[idx], PAD_X, PAD_Y, contentW);
 
     int totalPages = sentences.size() + 1;
     char info[20];
     sprintf(info, "%d / %d", idx + 2, totalPages);
-    display.setCursor(display.width() - 120, CONTENT_HEIGHT - PAD_Y);
-    display.println(info);
-    display.display();
+    M5.Display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
+    M5.Display.println(info);
 }
 
-void showMainMenu() {
-    display.fillScreen(TFT_WHITE);
-    display.setTextColor(TFT_BLACK);
-    display.setTextSize(1.2);
+void drawCopyTab() {
+    if (sentences.size() == 0) {
+        // No content loaded - Korean UI text
+        M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+        M5.Display.setFont(&fonts::efontKR_24);
+        M5.Display.setTextSize(1.0);
+        M5.Display.setTextColor(TFT_BLACK);
 
-    int centerY = CONTENT_HEIGHT / 2;
+        int centerY = CONTENT_HEIGHT / 2;
 
-    display.setCursor(PAD_X, centerY - 60);
-    display.println("No data for today");
+        M5.Display.setCursor(PAD_X, centerY - 40);
+        M5.Display.println("오늘의 필사 내용이 없습니다");
 
-    display.setCursor(PAD_X, centerY - 20);
-    display.println("Touch LEFT side: Start WiFi File Transfer");
+        M5.Display.setCursor(PAD_X, centerY + 10);
+        M5.Display.println("설정 탭에서 WiFi 파일 전송으로 콘텐츠를 업로드하세요");
+    } else {
+        if (currentPage == -1) {
+            drawCopyTitlePage();
+        } else {
+            drawCopyContentPage(currentPage);
+        }
+    }
+}
 
-    display.setCursor(PAD_X, centerY + 20);
-    display.println("Touch RIGHT side: Retry load content");
+void drawReadTab() {
+    drawPlaceholderContent("읽기", "Coming soon - epub 리더");
+}
 
-    display.display();
+void drawCurrentTabContent() {
+    switch (currentTab) {
+        case TAB_WORD:
+            drawWordTab();
+            break;
+        case TAB_GRAMMAR:
+            drawGrammarTab();
+            break;
+        case TAB_COPY:
+            drawCopyTab();
+            break;
+        case TAB_READ:
+            drawReadTab();
+            break;
+        case TAB_STATS:
+            drawStatsTab();
+            break;
+        case TAB_SETTINGS:
+            drawSettingsTab();
+            break;
+    }
+}
+
+// Track refreshes for periodic full clear
+int refreshCount = 0;
+const int FULL_CLEAR_INTERVAL = 5;  // Full clear every 5 refreshes
+
+void refreshDisplay() {
+    if (needsFullRedraw) {
+        // Periodic full clear to reduce ghosting
+        refreshCount++;
+        if (refreshCount >= FULL_CLEAR_INTERVAL) {
+            M5.Display.clearDisplay();
+            M5.Display.waitDisplay();
+            refreshCount = 0;
+        }
+
+        M5.Display.fillScreen(TFT_WHITE);
+        drawCurrentTabContent();
+        drawTabBar();
+        M5.Display.display();
+        M5.Display.waitDisplay();  // Wait for e-ink refresh to complete
+        needsFullRedraw = false;
+        needsTabRedraw = false;
+    } else if (needsTabRedraw) {
+        drawTabBar();
+        M5.Display.display();
+        M5.Display.waitDisplay();
+        needsTabRedraw = false;
+    }
 }
 
 // ============================================
 // Setup & Loop
 // ============================================
 void setup() {
-    Serial.begin(115200);
+    // Initialize M5Unified (handles display, touch, RTC, etc.)
+    auto cfg = M5.config();
+    cfg.clear_display = true;  // Clear display on start
+    M5.begin(cfg);
+
     Serial.println("Papers3 JP Learner Starting...");
 
-    // Initialize display
-    display.begin();
-    display.waitDisplay();
-    display.setRotation(1);  // Landscape mode
-    display.setEpdMode(epd_mode_t::epd_text);
-    display.setTextColor(TFT_BLACK);
-    display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.4);
+    // Configure display
+    Serial.println("Configuring M5.Display...");
+    M5.Display.setRotation(1);  // Landscape mode
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+
+    // E-ink full clear cycle (removes ghosting and vertical lines)
+    Serial.println("Clearing e-ink M5.Display...");
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.display();
+    M5.Display.waitDisplay();
+
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.display();
+    M5.Display.waitDisplay();
+
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
+    Serial.println("Display configured OK");
 
     // Initialize LittleFS (for config and default font)
-    if (!LittleFS.begin()) {
-        Serial.println("LittleFS mount failed");
+    Serial.println("Initializing LittleFS...");
+    if (!LittleFS.begin(false)) {
+        Serial.println("LittleFS mount failed, formatting...");
+        if (!LittleFS.format()) {
+            Serial.println("LittleFS format failed!");
+        } else {
+            Serial.println("LittleFS formatted OK");
+            if (!LittleFS.begin(false)) {
+                Serial.println("LittleFS mount after format failed!");
+            } else {
+                Serial.println("LittleFS mounted after format");
+            }
+        }
+    } else {
+        Serial.println("LittleFS mounted OK");
     }
 
+    // Test LittleFS write capability
+    Serial.println("Testing LittleFS write...");
+    File testFile = LittleFS.open("/test.txt", "w");
+    if (testFile) {
+        testFile.println("test");
+        testFile.close();
+        LittleFS.remove("/test.txt");
+        Serial.println("LittleFS write test OK");
+    } else {
+        Serial.println("LittleFS write test FAILED!");
+    }
+
+    // Load configuration
+    Serial.println("Loading config...");
+    loadConfig();
+
     // Initialize SD Card
+    Serial.println("Initializing SD Card...");
+    yield();  // Feed watchdog
     sdCardMounted = initSDCard();
 
     if (!sdCardMounted) {
+        Serial.println("SD card mount failed!");
         showSDCardError("SD card not detected.");
         return;
     }
+    Serial.println("SD Card mounted OK");
 
     // Ensure directory structure
+    Serial.println("Creating directories...");
+    yield();  // Feed watchdog
     if (!ensureDirectories()) {
         showSDCardError("Failed to create directories.");
         return;
@@ -730,71 +1517,173 @@ void setup() {
 
     Serial.printf("SD Card Free Space: %llu MB\n", getSDCardFreeSpace() / (1024 * 1024));
 
-    // Load content
-    if (loadTodaySentences()) {
-        showTitlePage();
-    } else {
-        showMainMenu();
+    // Initialize battery reading
+    Serial.println("Initializing battery...");
+    analogReadResolution(12);
+    updateBattery();
+
+    // Load 필사 content
+    Serial.println("Loading content...");
+    yield();  // Feed watchdog
+    loadTodaySentences();
+
+    // Draw initial screen with tab bar
+    Serial.println("Drawing initial screen...");
+    needsFullRedraw = true;
+    refreshDisplay();
+    Serial.println("Setup complete!");
+}
+
+void handleCopyTabTouch(int touchX, int touchY) {
+    // Page navigation for 필사 tab
+    if (sentences.size() > 0) {
+        if (currentPage == -1) {
+            currentPage = 0;
+        } else {
+            currentPage++;
+            if (currentPage >= (int)sentences.size()) {
+                currentPage = -1;
+            }
+        }
+        needsFullRedraw = true;
+    }
+}
+
+void handleSettingsTabTouch(int touchX, int touchY) {
+    switch (settingsState) {
+        case SETTINGS_MAIN: {
+            // Check which menu item was touched
+            if (touchY >= SETTINGS_ITEMS_START_Y && touchY < SETTINGS_ITEMS_START_Y + 6 * SETTINGS_ITEM_HEIGHT) {
+                int itemIndex = (touchY - SETTINGS_ITEMS_START_Y) / SETTINGS_ITEM_HEIGHT;
+                Serial.printf("Settings item touched: %d\n", itemIndex);
+
+                switch (itemIndex) {
+                    case 0:  // WiFi 파일 전송
+                        settingsState = SETTINGS_WIFI_AP;
+                        needsFullRedraw = true;
+                        break;
+                    case 1:  // WiFi 연결 설정
+                        settingsState = SETTINGS_WIFI_STA;
+                        needsFullRedraw = true;
+                        break;
+                    case 2:  // 화면 설정
+                        // TODO: Implement display settings
+                        break;
+                    case 3:  // 학습 설정
+                        // TODO: Implement learning settings
+                        break;
+                    case 4:  // 시스템 설정
+                        // TODO: Implement system settings
+                        break;
+                    case 5:  // SD 카드 정보
+                        // Just show info, no action needed
+                        break;
+                }
+            }
+            break;
+        }
+
+        case SETTINGS_WIFI_AP: {
+            // Back button (top area)
+            if (touchY < 50) {
+                settingsState = SETTINGS_MAIN;
+                needsFullRedraw = true;
+                break;
+            }
+
+            // Start file transfer button
+            int btnY = SETTINGS_ITEMS_START_Y + 10 + 40 + 35 + 50 + 20;  // Calculate button Y
+            int btnH = 60;
+            int btnW = 300;
+            int btnX = (SCREEN_WIDTH - btnW) / 2;
+
+            if (touchY >= btnY && touchY <= btnY + btnH &&
+                touchX >= btnX && touchX <= btnX + btnW) {
+                startWiFiMode();
+            }
+            break;
+        }
+
+        case SETTINGS_WIFI_STA: {
+            // Back button (top area)
+            if (touchY < 50) {
+                settingsState = SETTINGS_MAIN;
+                needsFullRedraw = true;
+            }
+            // WiFi scan button - TODO: implement
+            break;
+        }
+
+        default:
+            settingsState = SETTINGS_MAIN;
+            needsFullRedraw = true;
+            break;
+    }
+}
+
+void handleContentTouch(int touchX, int touchY) {
+    switch (currentTab) {
+        case TAB_COPY:
+            handleCopyTabTouch(touchX, touchY);
+            break;
+        case TAB_SETTINGS:
+            handleSettingsTabTouch(touchX, touchY);
+            break;
+        default:
+            // Other tabs - no action yet
+            break;
     }
 }
 
 void loop() {
+    M5.update();  // Update M5Unified state (touch, buttons, etc.)
+
     if (!sdCardMounted) {
         delay(1000);
         return;
     }
 
-    lgfx::touch_point_t tp;
+    // Update battery periodically
+    updateBattery();
+
+    // Get touch state
+    auto touch = M5.Touch.getDetail();
 
     // WiFi mode handling
     if (wifiMode) {
-        if (display.getTouch(&tp, 1)) {
+        if (touch.wasPressed()) {
             delay(300);
             stopWiFiMode();
 
-            // Reload content
-            if (loadTodaySentences()) {
-                showTitlePage();
-            } else {
-                showMainMenu();
-            }
-            while (display.getTouch(&tp, 1)) delay(10);
+            // Reload content and return to tab view
+            loadTodaySentences();
+            needsFullRedraw = true;
         }
         delay(50);
         return;
     }
 
-    // Normal mode handling
-    if (display.getTouch(&tp, 1)) {
-        delay(300);
+    // Normal mode - tab-based navigation
+    if (touch.wasPressed()) {
+        delay(200);  // Debounce
 
-        // Check if we're on main menu (no content loaded)
-        if (sentences.size() == 0) {
-            if (tp.x < SCREEN_WIDTH / 2) {
-                // Left side - start WiFi mode
-                startWiFiMode();
-            } else {
-                // Right side - retry loading
-                if (loadTodaySentences()) {
-                    showTitlePage();
-                }
-            }
+        int touchX = touch.x;
+        int touchY = touch.y;
+
+        // Check if touch is in tab bar
+        int tabTouched = handleTabTouch(touchX, touchY);
+
+        if (tabTouched >= 0) {
+            // Tab was touched
+            switchTab((TabIndex)tabTouched);
         } else {
-            // Normal page navigation
-            if (currentPage == -1) {
-                currentPage = 0;
-                showPage(currentPage);
-            } else {
-                currentPage++;
-                if (currentPage >= (int)sentences.size()) {
-                    currentPage = -1;
-                    showTitlePage();
-                } else {
-                    showPage(currentPage);
-                }
-            }
+            // Content area was touched
+            handleContentTouch(touchX, touchY);
         }
-        while (display.getTouch(&tp, 1)) delay(10);
     }
+
+    // Refresh display if needed
+    refreshDisplay();
+
     delay(50);
 }

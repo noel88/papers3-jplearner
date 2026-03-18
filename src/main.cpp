@@ -231,11 +231,24 @@ bool saveConfig() {
 // Battery Functions
 // ============================================
 int readBatteryPercent() {
-    int adcValue = analogRead(10);
-    float voltage = (adcValue / 4095.0) * 3.3 * 2;
-    int percent = (int)((voltage - 3.0) / (4.2 - 3.0) * 100);
-    percent = constrain(percent, 0, 100);
-    return percent;
+    // Use M5Unified Power API for M5Paper S3
+    int percent = M5.Power.getBatteryLevel();
+
+    // If M5Unified returns -1 or invalid, try voltage-based calculation
+    if (percent < 0 || percent > 100) {
+        int32_t voltage = M5.Power.getBatteryVoltage();
+        if (voltage > 0) {
+            // Convert mV to percent (3000mV = 0%, 4200mV = 100%)
+            percent = (voltage - 3000) * 100 / 1200;
+        } else {
+            // Fallback to ADC reading
+            int adcValue = analogRead(10);
+            float v = (adcValue / 4095.0) * 3.3 * 2;
+            percent = (int)((v - 3.0) / 1.2 * 100);
+        }
+    }
+
+    return constrain(percent, 0, 100);
 }
 
 void updateBattery() {
@@ -288,19 +301,31 @@ void drawTabBar() {
     int battX = TAB_COUNT * TAB_WIDTH + 10;
     int battY = tabY + (TAB_BAR_HEIGHT - 24) / 2;
 
-    M5.Display.drawRect(battX, battY, 40, 24, TFT_BLACK);
-    M5.Display.fillRect(battX + 40, battY + 6, 4, 12, TFT_BLACK);
-
-    int fillWidth = (36 * batteryPercent) / 100;
-    if (fillWidth > 0) {
-        M5.Display.fillRect(battX + 2, battY + 2, fillWidth, 20, TFT_BLACK);
+    // Battery outline
+    uint16_t battColor = TFT_BLACK;
+    if (batteryPercent <= 10) {
+        battColor = TFT_RED;  // Low battery warning
+    } else if (batteryPercent <= 20) {
+        battColor = 0xFD20;  // Orange warning (RGB565)
     }
 
+    M5.Display.drawRect(battX, battY, 40, 24, battColor);
+    M5.Display.fillRect(battX + 40, battY + 6, 4, 12, battColor);
+
+    // Battery fill
+    int fillWidth = (36 * batteryPercent) / 100;
+    if (fillWidth > 0) {
+        M5.Display.fillRect(battX + 2, battY + 2, fillWidth, 20, battColor);
+    }
+
+    // Battery percentage text
     M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(battColor);
     char battText[8];
     sprintf(battText, "%d%%", batteryPercent);
     M5.Display.setCursor(battX + 48, battY + 4);
     M5.Display.print(battText);
+    M5.Display.setTextColor(TFT_BLACK);
 
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);

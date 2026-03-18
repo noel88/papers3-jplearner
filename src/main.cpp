@@ -599,8 +599,8 @@ void drawTabBar() {
     display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
 
     // Draw each tab
-    display.setFont(&fonts::efontJA_16);
-    display.setTextSize(1.0);
+    display.setFont(&fonts::efontJA_24);
+    display.setTextSize(0.8);  // Scale down for tab bar
 
     for (int i = 0; i < TAB_COUNT; i++) {
         int tabX = i * TAB_WIDTH;
@@ -653,7 +653,7 @@ void drawTabBar() {
 
     // Reset font
     display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.4);
+    display.setTextSize(1.0);
 }
 
 int handleTabTouch(int touchX, int touchY) {
@@ -903,21 +903,18 @@ void drawPlaceholderContent(const char* tabName, const char* description) {
     display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
 
     display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.5);
+    display.setTextSize(1.0);
     display.setTextColor(TFT_BLACK);
 
-    // Title
+    // Title - centered
     int titleWidth = display.textWidth(tabName);
-    display.setCursor((SCREEN_WIDTH - titleWidth) / 2, CONTENT_HEIGHT / 2 - 50);
+    display.setCursor((SCREEN_WIDTH - titleWidth) / 2, CONTENT_HEIGHT / 2 - 40);
     display.print(tabName);
 
-    // Description
-    display.setTextSize(1.0);
+    // Description - centered
     int descWidth = display.textWidth(description);
-    display.setCursor((SCREEN_WIDTH - descWidth) / 2, CONTENT_HEIGHT / 2 + 10);
+    display.setCursor((SCREEN_WIDTH - descWidth) / 2, CONTENT_HEIGHT / 2 + 20);
     display.print(description);
-
-    display.setTextSize(1.4);
 }
 
 void drawWordTab() {
@@ -1272,17 +1269,31 @@ void drawCurrentTabContent() {
     }
 }
 
+// Track refreshes for periodic full clear
+int refreshCount = 0;
+const int FULL_CLEAR_INTERVAL = 5;  // Full clear every 5 refreshes
+
 void refreshDisplay() {
     if (needsFullRedraw) {
+        // Periodic full clear to reduce ghosting
+        refreshCount++;
+        if (refreshCount >= FULL_CLEAR_INTERVAL) {
+            display.clearDisplay();
+            display.waitDisplay();
+            refreshCount = 0;
+        }
+
         display.fillScreen(TFT_WHITE);
         drawCurrentTabContent();
         drawTabBar();
         display.display();
+        display.waitDisplay();  // Wait for e-ink refresh to complete
         needsFullRedraw = false;
         needsTabRedraw = false;
     } else if (needsTabRedraw) {
         drawTabBar();
         display.display();
+        display.waitDisplay();
         needsTabRedraw = false;
     }
 }
@@ -1301,10 +1312,15 @@ void setup() {
     display.waitDisplay();
     Serial.println("Display ready, configuring...");
     display.setRotation(1);  // Landscape mode
-    display.setEpdMode(epd_mode_t::epd_text);
+
+    // E-ink settings for clean display
+    display.setEpdMode(epd_mode_t::epd_quality);  // Better quality, less ghosting
+    display.clearDisplay();  // Full clear to remove ghosting
+    display.waitDisplay();
+
     display.setTextColor(TFT_BLACK);
     display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.4);
+    display.setTextSize(1.0);  // Normal size, 1.4 might cause issues
     Serial.println("Display configured OK");
 
     // Initialize LittleFS (for config and default font)

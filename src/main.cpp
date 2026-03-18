@@ -451,7 +451,7 @@ void showSDCardError(const char* message) {
     int centerY = CONTENT_HEIGHT / 2;
 
     display.setCursor(PAD_X, centerY - 40);
-    display.setTextSize(1.5);
+    display.setTextSize(1.0);
     display.println("SD Card Error");
 
     display.setCursor(PAD_X, centerY + 20);
@@ -599,7 +599,7 @@ void drawTabBar() {
     display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
 
     // Draw each tab
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
     display.setTextSize(0.8);  // Scale down for tab bar
 
     for (int i = 0; i < TAB_COUNT; i++) {
@@ -652,7 +652,7 @@ void drawTabBar() {
     display.print(battText);
 
     // Reset font
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
     display.setTextSize(1.0);
 }
 
@@ -799,19 +799,19 @@ void startWiFiMode() {
     // Display WiFi info
     display.fillScreen(TFT_WHITE);
     display.setTextColor(TFT_BLACK);
-    display.setTextSize(1.5);
+    display.setTextSize(1.0);
 
     int y = PAD_Y;
     display.setCursor(PAD_X, y);
     display.println("WiFi File Transfer Mode");
     y += 60;
 
-    display.setTextSize(1.2);
+    display.setTextSize(1.0);
     display.setCursor(PAD_X, y);
     display.println("1. Connect to WiFi:");
     y += 40;
 
-    display.setTextSize(1.4);
+    display.setTextSize(1.0);
     display.setCursor(PAD_X + 40, y);
     display.printf("SSID: %s", config.apSsid.c_str());
     y += 35;
@@ -819,12 +819,12 @@ void startWiFiMode() {
     display.printf("Pass: %s", config.apPassword.c_str());
     y += 50;
 
-    display.setTextSize(1.2);
+    display.setTextSize(1.0);
     display.setCursor(PAD_X, y);
     display.println("2. Open browser:");
     y += 40;
 
-    display.setTextSize(1.4);
+    display.setTextSize(1.0);
     display.setCursor(PAD_X + 40, y);
     display.printf("http://%s", IP.toString().c_str());
     y += 60;
@@ -902,7 +902,7 @@ bool loadTodaySentences() {
 void drawPlaceholderContent(const char* tabName, const char* description) {
     display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
 
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
     display.setTextSize(1.0);
     display.setTextColor(TFT_BLACK);
 
@@ -942,11 +942,11 @@ const int SETTINGS_ITEMS_START_Y = 60;
 
 void drawSettingsMainMenu() {
     display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
     display.setTextColor(TFT_BLACK);
 
     // Title
-    display.setTextSize(1.3);
+    display.setTextSize(1.0);
     display.setCursor(PAD_X, PAD_Y);
     display.print("설정");
 
@@ -993,16 +993,16 @@ void drawSettingsMainMenu() {
         getSDCardFreeSpace() / (1024 * 1024),
         SD.totalBytes() / (1024 * 1024));
 
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
 }
 
 void drawWiFiAPSettings() {
     display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
     display.setTextColor(TFT_BLACK);
 
     // Title with back button
-    display.setTextSize(1.3);
+    display.setTextSize(1.0);
     display.setCursor(PAD_X, PAD_Y);
     display.print("< WiFi 파일 전송");
     display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
@@ -1031,7 +1031,7 @@ void drawWiFiAPSettings() {
 
     display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
     display.setTextColor(TFT_WHITE);
-    display.setTextSize(1.2);
+    display.setTextSize(1.0);
 
     int textW = display.textWidth("파일 전송 시작");
     display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
@@ -1052,16 +1052,16 @@ void drawWiFiAPSettings() {
     display.setCursor(PAD_X, y);
     display.print("3. Open http://192.168.4.1 in browser");
 
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
 }
 
 void drawWiFiSTASettings() {
     display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
     display.setTextColor(TFT_BLACK);
 
     // Title with back button
-    display.setTextSize(1.3);
+    display.setTextSize(1.0);
     display.setCursor(PAD_X, PAD_Y);
     display.print("< WiFi 연결 설정");
     display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
@@ -1111,7 +1111,7 @@ void drawWiFiSTASettings() {
     display.setCursor(PAD_X, y);
     display.print("Currently use AP mode for file transfer.");
 
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
 }
 
 void drawSettingsTab() {
@@ -1175,14 +1175,16 @@ void drawCopyTitlePage() {
     display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
     int contentW = SCREEN_WIDTH - PAD_X * 2;
     int y = PAD_Y;
-    int fontH = display.fontHeight();
 
+    // Japanese font for Japanese content
     display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.4);
+    display.setTextSize(1.0);
     display.setTextColor(TFT_BLACK);
 
+    int fontH = display.fontHeight();
+
     display.setCursor(PAD_X, y);
-    display.println(todayDate);
+    display.println(todayDate);  // 1月1日 format
     y += fontH + 16;
 
     display.drawLine(PAD_X, y, SCREEN_WIDTH - PAD_X, y, TFT_BLACK);
@@ -1202,8 +1204,9 @@ void drawCopyTitlePage() {
 void drawCopyContentPage(int idx) {
     display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
 
+    // Japanese font for Japanese content
     display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.4);
+    display.setTextSize(1.0);
     display.setTextColor(TFT_BLACK);
 
     int contentW = SCREEN_WIDTH - PAD_X * 2;
@@ -1218,10 +1221,10 @@ void drawCopyContentPage(int idx) {
 
 void drawCopyTab() {
     if (sentences.size() == 0) {
-        // No content loaded
+        // No content loaded - Korean UI text
         display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-        display.setFont(&fonts::efontJA_24);
-        display.setTextSize(1.2);
+        display.setFont(&fonts::efontKR_24);
+        display.setTextSize(1.0);
         display.setTextColor(TFT_BLACK);
 
         int centerY = CONTENT_HEIGHT / 2;
@@ -1231,8 +1234,6 @@ void drawCopyTab() {
 
         display.setCursor(PAD_X, centerY + 10);
         display.println("설정 탭에서 WiFi 파일 전송으로 콘텐츠를 업로드하세요");
-
-        display.setTextSize(1.4);
     } else {
         if (currentPage == -1) {
             drawCopyTitlePage();
@@ -1319,7 +1320,7 @@ void setup() {
     display.waitDisplay();
 
     display.setTextColor(TFT_BLACK);
-    display.setFont(&fonts::efontJA_24);
+    display.setFont(&fonts::efontKR_24);
     display.setTextSize(1.0);  // Normal size, 1.4 might cause issues
     Serial.println("Display configured OK");
 

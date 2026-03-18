@@ -265,6 +265,23 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
         </div>
     </div>
 
+    <div class="card">
+        <h2>WiFi Settings</h2>
+        <div style="margin-bottom: 15px;">
+            <label><strong>AP Mode (File Transfer)</strong></label>
+            <input type="text" id="apSsid" placeholder="AP SSID" style="width:100%;padding:8px;margin:5px 0;">
+            <input type="text" id="apPass" placeholder="AP Password" style="width:100%;padding:8px;margin:5px 0;">
+            <button onclick="saveApSettings()" style="background:#17a2b8;">Save AP Settings</button>
+        </div>
+        <div style="margin-top:20px;">
+            <label><strong>External WiFi (for future sync)</strong></label>
+            <input type="text" id="staSsid" placeholder="WiFi SSID" style="width:100%;padding:8px;margin:5px 0;">
+            <input type="password" id="staPass" placeholder="WiFi Password" style="width:100%;padding:8px;margin:5px 0;">
+            <button onclick="saveStaSettings()" style="background:#17a2b8;">Save WiFi Settings</button>
+        </div>
+        <div id="wifiStatus"></div>
+    </div>
+
     <div class="card" style="text-align: center;">
         <button onclick="exitWifi()" style="background: #6c757d;">Exit WiFi Mode</button>
     </div>
@@ -387,8 +404,69 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
             document.body.innerHTML = '<h1 style="text-align:center;margin-top:100px;">Restarting...</h1>';
         }
 
+        async function loadConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const cfg = await res.json();
+                document.getElementById('apSsid').value = cfg.apSsid || '';
+                document.getElementById('apPass').value = cfg.apPass || '';
+                document.getElementById('staSsid').value = cfg.staSsid || '';
+                document.getElementById('staPass').value = cfg.staPass || '';
+            } catch(e) {
+                console.error('Failed to load config');
+            }
+        }
+
+        async function saveApSettings() {
+            const ssid = document.getElementById('apSsid').value;
+            const pass = document.getElementById('apPass').value;
+            const status = document.getElementById('wifiStatus');
+
+            if (ssid.length < 1 || pass.length < 8) {
+                status.innerHTML = '<div class="status error">SSID required, password min 8 chars</div>';
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/config/ap', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ssid, password: pass})
+                });
+                if (res.ok) {
+                    status.innerHTML = '<div class="status success">AP settings saved! Restart to apply.</div>';
+                } else {
+                    status.innerHTML = '<div class="status error">Failed to save</div>';
+                }
+            } catch(e) {
+                status.innerHTML = '<div class="status error">Error: ' + e.message + '</div>';
+            }
+        }
+
+        async function saveStaSettings() {
+            const ssid = document.getElementById('staSsid').value;
+            const pass = document.getElementById('staPass').value;
+            const status = document.getElementById('wifiStatus');
+
+            try {
+                const res = await fetch('/api/config/sta', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ssid, password: pass})
+                });
+                if (res.ok) {
+                    status.innerHTML = '<div class="status success">WiFi settings saved!</div>';
+                } else {
+                    status.innerHTML = '<div class="status error">Failed to save</div>';
+                }
+            } catch(e) {
+                status.innerHTML = '<div class="status error">Error: ' + e.message + '</div>';
+            }
+        }
+
         loadInfo();
         loadFiles();
+        loadConfig();
     </script>
 </body>
 </html>
@@ -778,6 +856,65 @@ void setupWebServer() {
         delay(1000);
         ESP.restart();
     });
+
+    // API: Get config
+    server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String json = "{";
+        json += "\"apSsid\":\"" + config.apSsid + "\",";
+        json += "\"apPass\":\"" + config.apPassword + "\",";
+        json += "\"staSsid\":\"" + config.staSsid + "\",";
+        json += "\"staPass\":\"" + config.staPassword + "\"";
+        json += "}";
+        request->send(200, "application/json", json);
+    });
+
+    // API: Save AP config
+    server.on("/api/config/ap", HTTP_POST, [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            DeserializationError error = deserializeJson(doc, body);
+
+            if (error) {
+                request->send(400, "text/plain", "Invalid JSON");
+                return;
+            }
+
+            config.apSsid = doc["ssid"] | config.apSsid;
+            config.apPassword = doc["password"] | config.apPassword;
+
+            if (saveConfig()) {
+                request->send(200, "text/plain", "OK");
+            } else {
+                request->send(500, "text/plain", "Failed to save");
+            }
+        }
+    );
+
+    // API: Save Station config
+    server.on("/api/config/sta", HTTP_POST, [](AsyncWebServerRequest *request) {},
+        NULL,
+        [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
+            String body = String((char*)data).substring(0, len);
+            JsonDocument doc;
+            DeserializationError error = deserializeJson(doc, body);
+
+            if (error) {
+                request->send(400, "text/plain", "Invalid JSON");
+                return;
+            }
+
+            config.staSsid = doc["ssid"] | config.staSsid;
+            config.staPassword = doc["password"] | config.staPassword;
+
+            if (saveConfig()) {
+                request->send(200, "text/plain", "OK");
+            } else {
+                request->send(500, "text/plain", "Failed to save");
+            }
+        }
+    );
 
     server.begin();
     Serial.println("Web server started");

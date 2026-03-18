@@ -39,3 +39,6 @@ Thumbs.db
 # Personal config (if any)
 secrets.h
 config.local.h
+
+# Data files (fonts, content - manage separately)
+data/

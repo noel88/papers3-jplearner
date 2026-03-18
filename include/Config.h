@@ -2,69 +2,77 @@
 
 #include <Arduino.h>
 
-// Screen dimensions (M5Paper S3 landscape)
-const int SCREEN_WIDTH = 960;
-const int SCREEN_HEIGHT = 540;
+/**
+ * Common configuration constants for Papers3 JP Learner
+ *
+ * This header provides shared constants used across multiple files.
+ */
 
-// Tab bar configuration
-const int TAB_BAR_HEIGHT = 50;
-const int TAB_COUNT = 6;
-const int TAB_WIDTH = SCREEN_WIDTH / TAB_COUNT;
+// ============================================
+// Screen Dimensions (M5Paper S3: 960x540)
+// ============================================
+constexpr int SCREEN_WIDTH = 960;
+constexpr int SCREEN_HEIGHT = 540;
+constexpr int TAB_HEIGHT = 80;
+constexpr int CONTENT_HEIGHT = SCREEN_HEIGHT - TAB_HEIGHT;  // 460
 
-// Content area
-const int CONTENT_HEIGHT = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+// Common padding
+constexpr int PAD_X = 20;
+constexpr int PAD_Y = 20;
 
-// Padding
-const int PAD_X = 20;
-const int PAD_Y = 15;
-
-// Line spacing for wrapped text
-const int LINE_SPACING = 8;
-
-// SD Card pins for M5Paper S3
-const int SD_CS = 47;
-const int SD_SCK = 39;
-const int SD_MISO = 40;
-const int SD_MOSI = 38;
-
-// File paths
-const char* const DIR_BOOKS = "/books";
-const char* const DIR_DICT = "/dict";
-const char* const DIR_FONTS = "/fonts";
-const char* const DIR_USERDATA = "/userdata";
-const char* const CONFIG_PATH = "/config.json";
-
-// Tab indices
+// ============================================
+// Tab System
+// ============================================
 enum TabIndex {
     TAB_WORD = 0,
-    TAB_GRAMMAR = 1,
-    TAB_COPY = 2,
-    TAB_READ = 3,
-    TAB_STATS = 4,
-    TAB_SETTINGS = 5
+    TAB_GRAMMAR,
+    TAB_COPY,
+    TAB_READ,
+    TAB_STATS,
+    TAB_SETTINGS,
+    TAB_COUNT
 };
 
-// Tab labels
-const char* const TAB_LABELS[] = {"단어", "문형", "필사", "읽기", "통계", "설정"};
+// ============================================
+// SD Card directories
+// ============================================
+extern const char* DIR_BOOKS;
+extern const char* DIR_DICT;
+extern const char* DIR_FONTS;
+extern const char* DIR_USERDATA;
 
-// Battery check interval
-const unsigned long BATTERY_CHECK_INTERVAL = 60000;  // 1 minute
+// Configuration structure
+struct Config {
+    // Language
+    String language = "ko";
 
-// App configuration structure
-struct AppConfig {
-    // Display
-    int fontSize = 24;
-    int startScreen = TAB_COPY;
+    // Learning settings
+    int newCardsPerDay = 20;
+    int reviewLimit = -1;  // -1 = unlimited
 
-    // System
-    int sleepMinutes = 30;
+    // Display settings
+    String fontSize = "medium";  // small, medium, large
+    String startScreen = "copy"; // word, grammar, copy, read
 
-    // WiFi AP mode
-    String apSsid = "M5Paper-JP";
+    // Daily reading (Copy screen)
+    String dailyEpub = "";  // EPUB filename for daily content (empty = auto-detect)
+
+    // System settings
+    int sleepMinutes = 5;
+
+    // WiFi AP settings (for file transfer)
+    String apSsid = "Papers3-JP";
     String apPassword = "12345678";
 
-    // WiFi Station mode
+    // WiFi Station settings (for external connection)
     String staSsid = "";
     String staPassword = "";
     bool autoConnect = false;
 };
+
+// Global config instance (defined in main.cpp)
+extern Config config;
+
+// Config functions
+extern bool loadConfig();
+extern bool saveConfig();

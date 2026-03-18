@@ -6,7 +6,14 @@
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
-#include "CopyScreen.h"
+
+// Screen architecture includes
+#include "screens/ScreenManager.h"
+#include "screens/CopyScreen.h"
+#include "screens/SettingsScreen.h"
+#include "screens/PlaceholderScreen.h"
+#include "Config.h"
+#include "WebUI.h"
 
 // ============================================
 // Hardware Configuration
@@ -20,32 +27,11 @@ AsyncWebServer server(80);
 #define SD_MOSI 38
 
 // ============================================
-// Constants
+// Constants (also defined in BaseScreen.h)
 // ============================================
-const int SCREEN_WIDTH = 960;
-const int SCREEN_HEIGHT = 540;
 const int TAB_BAR_HEIGHT = 60;
-const int CONTENT_HEIGHT = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
-const int CONTENT_Y = 0;  // Content starts at top
-
-const int PAD_X = 30;
-const int PAD_Y = 20;
-const int LINE_SPACING = 16;
-
-// Tab configuration
-const int TAB_COUNT = 6;
 const int BATTERY_WIDTH = 80;
-const int TAB_WIDTH = (SCREEN_WIDTH - BATTERY_WIDTH) / TAB_COUNT;  // ~146px each
-
-// Tab indices
-enum TabIndex {
-    TAB_WORD = 0,      // 단어
-    TAB_GRAMMAR = 1,   // 문형
-    TAB_COPY = 2,      // 필사
-    TAB_READ = 3,      // 읽기
-    TAB_STATS = 4,     // 통계
-    TAB_SETTINGS = 5   // 설정
-};
+const int TAB_WIDTH = (SCREEN_WIDTH - BATTERY_WIDTH) / TAB_COUNT;
 
 const char* TAB_LABELS[] = {
     "단어",
@@ -66,56 +52,27 @@ const char* DIR_USERDATA = "/userdata";
 const char* CONFIG_PATH = "/config.json";
 
 // ============================================
-// Configuration Structure
+// Global Config Instance (from Config.h)
 // ============================================
-struct Config {
-    // Language
-    String language = "ko";
+Config config;
 
-    // Learning settings
-    int newCardsPerDay = 20;
-    int reviewLimit = -1;  // -1 = unlimited
-
-    // Display settings
-    String fontSize = "medium";  // small, medium, large
-    String startScreen = "copy"; // word, grammar, copy, read
-
-    // System settings
-    int sleepMinutes = 5;
-
-    // WiFi AP settings (for file transfer)
-    String apSsid = "Papers3-JP";
-    String apPassword = "12345678";
-
-    // WiFi Station settings (for external connection)
-    String staSsid = "";
-    String staPassword = "";
-    bool autoConnect = false;
-} config;
-
-// Settings menu state
-enum SettingsMenuState {
-    SETTINGS_MAIN,
-    SETTINGS_WIFI_AP,
-    SETTINGS_WIFI_STA,
-    SETTINGS_DISPLAY,
-    SETTINGS_LEARNING,
-    SETTINGS_SYSTEM
-};
-
-SettingsMenuState settingsState = SETTINGS_MAIN;
+// ============================================
+// Screen Instances (static allocation)
+// ============================================
+CopyScreen copyScreen;
+SettingsScreen settingsScreen;
+PlaceholderScreen wordScreen("Word", "단어 학습", "Coming soon - SRS 단어 학습");
+PlaceholderScreen grammarScreen("Grammar", "문형 학습", "Coming soon - N2/N1 문법 패턴");
+PlaceholderScreen readScreen("Read", "읽기", "Coming soon - epub 리더");
+PlaceholderScreen statsScreen("Stats", "학습 통계", "Coming soon - 학습 진행 현황");
 
 // ============================================
 // State
 // ============================================
 bool sdCardMounted = false;
 bool wifiMode = false;
-TabIndex currentTab = TAB_COPY;  // Start with 필사 (transcription)
 bool needsFullRedraw = true;
 bool needsTabRedraw = false;
-
-// 필사 (Copy/Transcription) screen
-CopyScreen copyScreen;
 
 // WiFi state
 String currentUploadPath = "";
@@ -124,347 +81,7 @@ File uploadFile;
 // Battery state
 int batteryPercent = 100;
 unsigned long lastBatteryCheck = 0;
-const unsigned long BATTERY_CHECK_INTERVAL = 60000;  // Check every minute
-
-// ============================================
-// HTML Page
-// ============================================
-const char HTML_PAGE[] PROGMEM = R"rawliteral(
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Papers3 JP Learner - File Manager</title>
-    <style>
-        * { box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
-            background: #f5f5f5;
-        }
-        h1 { color: #333; text-align: center; }
-        .card {
-            background: white;
-            border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .card h2 { margin-top: 0; color: #555; }
-        select, input[type="file"] {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        button {
-            background: #4CAF50;
-            color: white;
-            padding: 12px 24px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-            width: 100%;
-        }
-        button:hover { background: #45a049; }
-        button:disabled { background: #ccc; cursor: not-allowed; }
-        .progress {
-            width: 100%;
-            height: 20px;
-            background: #e0e0e0;
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 10px 0;
-            display: none;
-        }
-        .progress-bar {
-            height: 100%;
-            background: #4CAF50;
-            width: 0%;
-            transition: width 0.3s;
-        }
-        .status {
-            text-align: center;
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 4px;
-        }
-        .success { background: #d4edda; color: #155724; }
-        .error { background: #f8d7da; color: #721c24; }
-        .file-list {
-            max-height: 300px;
-            overflow-y: auto;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
-        .file-item {
-            padding: 10px;
-            border-bottom: 1px solid #eee;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .file-item:last-child { border-bottom: none; }
-        .file-name { font-weight: 500; }
-        .file-size { color: #888; font-size: 14px; }
-        .btn-delete {
-            background: #dc3545;
-            padding: 5px 10px;
-            font-size: 12px;
-            width: auto;
-        }
-        .info { background: #e7f3ff; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
-        .info p { margin: 5px 0; }
-    </style>
-</head>
-<body>
-    <h1>Papers3 JP Learner</h1>
-
-    <div class="info">
-        <p><strong>SD Card:</strong> <span id="sdInfo">Loading...</span></p>
-        <p><strong>Free Space:</strong> <span id="freeSpace">Loading...</span></p>
-    </div>
-
-    <div class="card">
-        <h2>Upload File</h2>
-        <select id="targetDir">
-            <option value="/books">books (epub, txt)</option>
-            <option value="/dict">dict (dictionary)</option>
-            <option value="/fonts">fonts</option>
-            <option value="/userdata">userdata</option>
-        </select>
-        <input type="file" id="fileInput" multiple>
-        <div class="progress" id="progress">
-            <div class="progress-bar" id="progressBar"></div>
-        </div>
-        <div id="status"></div>
-        <button onclick="uploadFiles()" id="uploadBtn">Upload</button>
-    </div>
-
-    <div class="card">
-        <h2>Files</h2>
-        <select id="browseDir" onchange="loadFiles()">
-            <option value="/books">books</option>
-            <option value="/dict">dict</option>
-            <option value="/fonts">fonts</option>
-            <option value="/userdata">userdata</option>
-        </select>
-        <div class="file-list" id="fileList">
-            <div class="file-item">Loading...</div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>WiFi Settings</h2>
-        <div style="margin-bottom: 15px;">
-            <label><strong>AP Mode (File Transfer)</strong></label>
-            <input type="text" id="apSsid" placeholder="AP SSID" style="width:100%;padding:8px;margin:5px 0;">
-            <input type="text" id="apPass" placeholder="AP Password" style="width:100%;padding:8px;margin:5px 0;">
-            <button onclick="saveApSettings()" style="background:#17a2b8;">Save AP Settings</button>
-        </div>
-        <div style="margin-top:20px;">
-            <label><strong>External WiFi (for future sync)</strong></label>
-            <input type="text" id="staSsid" placeholder="WiFi SSID" style="width:100%;padding:8px;margin:5px 0;">
-            <input type="password" id="staPass" placeholder="WiFi Password" style="width:100%;padding:8px;margin:5px 0;">
-            <button onclick="saveStaSettings()" style="background:#17a2b8;">Save WiFi Settings</button>
-        </div>
-        <div id="wifiStatus"></div>
-    </div>
-
-    <div class="card" style="text-align: center;">
-        <button onclick="exitWifi()" style="background: #6c757d;">Exit WiFi Mode</button>
-    </div>
-
-    <script>
-        async function loadInfo() {
-            try {
-                const res = await fetch('/api/info');
-                const data = await res.json();
-                document.getElementById('sdInfo').textContent = data.cardSize + ' MB';
-                document.getElementById('freeSpace').textContent = data.freeSpace + ' MB';
-            } catch(e) {
-                document.getElementById('sdInfo').textContent = 'Error';
-            }
-        }
-
-        async function loadFiles() {
-            const dir = document.getElementById('browseDir').value;
-            const list = document.getElementById('fileList');
-            try {
-                const res = await fetch('/api/files?dir=' + encodeURIComponent(dir));
-                const files = await res.json();
-                if (files.length === 0) {
-                    list.innerHTML = '<div class="file-item">No files</div>';
-                } else {
-                    list.innerHTML = files.map(f => `
-                        <div class="file-item">
-                            <div>
-                                <span class="file-name">${f.name}</span><br>
-                                <span class="file-size">${formatSize(f.size)}</span>
-                            </div>
-                            <button class="btn-delete" onclick="deleteFile('${dir}/${f.name}')">Delete</button>
-                        </div>
-                    `).join('');
-                }
-            } catch(e) {
-                list.innerHTML = '<div class="file-item">Error loading files</div>';
-            }
-        }
-
-        function formatSize(bytes) {
-            if (bytes < 1024) return bytes + ' B';
-            if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
-            return (bytes/1024/1024).toFixed(1) + ' MB';
-        }
-
-        async function uploadFiles() {
-            const input = document.getElementById('fileInput');
-            const dir = document.getElementById('targetDir').value;
-            const btn = document.getElementById('uploadBtn');
-            const progress = document.getElementById('progress');
-            const progressBar = document.getElementById('progressBar');
-            const status = document.getElementById('status');
-
-            if (!input.files.length) {
-                status.innerHTML = '<div class="status error">Please select files</div>';
-                return;
-            }
-
-            btn.disabled = true;
-            progress.style.display = 'block';
-            status.innerHTML = '';
-
-            for (let i = 0; i < input.files.length; i++) {
-                const file = input.files[i];
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('dir', dir);
-
-                try {
-                    const xhr = new XMLHttpRequest();
-                    xhr.open('POST', '/api/upload', true);
-
-                    xhr.upload.onprogress = (e) => {
-                        if (e.lengthComputable) {
-                            const pct = (e.loaded / e.total) * 100;
-                            progressBar.style.width = pct + '%';
-                        }
-                    };
-
-                    await new Promise((resolve, reject) => {
-                        xhr.onload = () => {
-                            if (xhr.status === 200) resolve();
-                            else reject(new Error(xhr.statusText));
-                        };
-                        xhr.onerror = () => reject(new Error('Network error'));
-                        xhr.send(formData);
-                    });
-
-                    status.innerHTML = `<div class="status success">${file.name} uploaded!</div>`;
-                } catch(e) {
-                    status.innerHTML = `<div class="status error">Error: ${e.message}</div>`;
-                }
-            }
-
-            btn.disabled = false;
-            progress.style.display = 'none';
-            progressBar.style.width = '0%';
-            input.value = '';
-            loadFiles();
-            loadInfo();
-        }
-
-        async function deleteFile(path) {
-            if (!confirm('Delete ' + path + '?')) return;
-            try {
-                await fetch('/api/delete?path=' + encodeURIComponent(path), {method: 'DELETE'});
-                loadFiles();
-                loadInfo();
-            } catch(e) {
-                alert('Error deleting file');
-            }
-        }
-
-        async function exitWifi() {
-            if (!confirm('Exit WiFi mode and restart?')) return;
-            try {
-                await fetch('/api/exit');
-            } catch(e) {}
-            document.body.innerHTML = '<h1 style="text-align:center;margin-top:100px;">Restarting...</h1>';
-        }
-
-        async function loadConfig() {
-            try {
-                const res = await fetch('/api/config');
-                const cfg = await res.json();
-                document.getElementById('apSsid').value = cfg.apSsid || '';
-                document.getElementById('apPass').value = cfg.apPass || '';
-                document.getElementById('staSsid').value = cfg.staSsid || '';
-                document.getElementById('staPass').value = cfg.staPass || '';
-            } catch(e) {
-                console.error('Failed to load config');
-            }
-        }
-
-        async function saveApSettings() {
-            const ssid = document.getElementById('apSsid').value;
-            const pass = document.getElementById('apPass').value;
-            const status = document.getElementById('wifiStatus');
-
-            if (ssid.length < 1 || pass.length < 8) {
-                status.innerHTML = '<div class="status error">SSID required, password min 8 chars</div>';
-                return;
-            }
-
-            try {
-                const res = await fetch('/api/config/ap', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ssid, password: pass})
-                });
-                if (res.ok) {
-                    status.innerHTML = '<div class="status success">AP settings saved! Restart to apply.</div>';
-                } else {
-                    status.innerHTML = '<div class="status error">Failed to save</div>';
-                }
-            } catch(e) {
-                status.innerHTML = '<div class="status error">Error: ' + e.message + '</div>';
-            }
-        }
-
-        async function saveStaSettings() {
-            const ssid = document.getElementById('staSsid').value;
-            const pass = document.getElementById('staPass').value;
-            const status = document.getElementById('wifiStatus');
-
-            try {
-                const res = await fetch('/api/config/sta', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ssid, password: pass})
-                });
-                if (res.ok) {
-                    status.innerHTML = '<div class="status success">WiFi settings saved!</div>';
-                } else {
-                    status.innerHTML = '<div class="status error">Failed to save</div>';
-                }
-            } catch(e) {
-                status.innerHTML = '<div class="status error">Error: ' + e.message + '</div>';
-            }
-        }
-
-        loadInfo();
-        loadFiles();
-        loadConfig();
-    </script>
-</body>
-</html>
-)rawliteral";
+const unsigned long BATTERY_CHECK_INTERVAL = 60000;
 
 // ============================================
 // SD Card Functions
@@ -564,25 +181,15 @@ bool loadConfig() {
         return false;
     }
 
-    // Language
     config.language = doc["language"] | "ko";
-
-    // Learning
     config.newCardsPerDay = doc["learning"]["newCardsPerDay"] | 20;
     config.reviewLimit = doc["learning"]["reviewLimit"] | -1;
-
-    // Display
     config.fontSize = doc["display"]["fontSize"] | "medium";
     config.startScreen = doc["display"]["startScreen"] | "copy";
-
-    // System
+    config.dailyEpub = doc["display"]["dailyEpub"] | "";
     config.sleepMinutes = doc["system"]["sleepMinutes"] | 5;
-
-    // WiFi AP
     config.apSsid = doc["wifi"]["ap"]["ssid"] | "Papers3-JP";
     config.apPassword = doc["wifi"]["ap"]["password"] | "12345678";
-
-    // WiFi Station
     config.staSsid = doc["wifi"]["station"]["ssid"] | "";
     config.staPassword = doc["wifi"]["station"]["password"] | "";
     config.autoConnect = doc["wifi"]["station"]["autoConnect"] | false;
@@ -594,25 +201,15 @@ bool loadConfig() {
 bool saveConfig() {
     JsonDocument doc;
 
-    // Language
     doc["language"] = config.language;
-
-    // Learning
     doc["learning"]["newCardsPerDay"] = config.newCardsPerDay;
     doc["learning"]["reviewLimit"] = config.reviewLimit;
-
-    // Display
     doc["display"]["fontSize"] = config.fontSize;
     doc["display"]["startScreen"] = config.startScreen;
-
-    // System
+    doc["display"]["dailyEpub"] = config.dailyEpub;
     doc["system"]["sleepMinutes"] = config.sleepMinutes;
-
-    // WiFi AP
     doc["wifi"]["ap"]["ssid"] = config.apSsid;
     doc["wifi"]["ap"]["password"] = config.apPassword;
-
-    // WiFi Station
     doc["wifi"]["station"]["ssid"] = config.staSsid;
     doc["wifi"]["station"]["password"] = config.staPassword;
     doc["wifi"]["station"]["autoConnect"] = config.autoConnect;
@@ -634,18 +231,10 @@ bool saveConfig() {
 // Battery Functions
 // ============================================
 int readBatteryPercent() {
-    // M5Paper S3 battery voltage reading
-    // Battery pin is typically GPIO10 on M5Paper S3
-    // Full charge ~4.2V, Empty ~3.0V
-    // Using voltage divider, ADC reads half of actual voltage
-
     int adcValue = analogRead(10);
-    float voltage = (adcValue / 4095.0) * 3.3 * 2;  // Voltage divider factor
-
-    // Convert voltage to percentage (3.0V = 0%, 4.2V = 100%)
+    float voltage = (adcValue / 4095.0) * 3.3 * 2;
     int percent = (int)((voltage - 3.0) / (4.2 - 3.0) * 100);
     percent = constrain(percent, 0, 100);
-
     return percent;
 }
 
@@ -663,21 +252,17 @@ void updateBattery() {
 // ============================================
 void drawTabBar() {
     int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    TabIndex currentTab = ScreenManager::instance().getCurrentTab();
 
-    // Draw tab bar background
     M5.Display.fillRect(0, tabY, SCREEN_WIDTH, TAB_BAR_HEIGHT, TFT_WHITE);
-
-    // Draw top border line
     M5.Display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
 
-    // Draw each tab
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(0.8);  // Scale down for tab bar
+    M5.Display.setTextSize(0.8);
 
     for (int i = 0; i < TAB_COUNT; i++) {
         int tabX = i * TAB_WIDTH;
 
-        // Highlight current tab
         if (i == currentTab) {
             M5.Display.fillRect(tabX + 2, tabY + 2, TAB_WIDTH - 4, TAB_BAR_HEIGHT - 4, TFT_BLACK);
             M5.Display.setTextColor(TFT_WHITE);
@@ -685,7 +270,6 @@ void drawTabBar() {
             M5.Display.setTextColor(TFT_BLACK);
         }
 
-        // Draw tab label centered
         int labelWidth = M5.Display.textWidth(TAB_LABELS[i]);
         int labelX = tabX + (TAB_WIDTH - labelWidth) / 2;
         int labelY = tabY + (TAB_BAR_HEIGHT - M5.Display.fontHeight()) / 2;
@@ -693,37 +277,31 @@ void drawTabBar() {
         M5.Display.setCursor(labelX, labelY);
         M5.Display.print(TAB_LABELS[i]);
 
-        // Draw vertical separator (except for last tab)
         if (i < TAB_COUNT - 1) {
-            M5.Display.drawLine(tabX + TAB_WIDTH, tabY + 8, tabX + TAB_WIDTH, tabY + TAB_BAR_HEIGHT - 8, 0x7BEF);  // Gray color
+            M5.Display.drawLine(tabX + TAB_WIDTH, tabY + 8, tabX + TAB_WIDTH, tabY + TAB_BAR_HEIGHT - 8, 0x7BEF);
         }
     }
 
-    // Reset text color
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Draw battery indicator
+    // Battery indicator
     int battX = TAB_COUNT * TAB_WIDTH + 10;
     int battY = tabY + (TAB_BAR_HEIGHT - 24) / 2;
 
-    // Battery icon outline
     M5.Display.drawRect(battX, battY, 40, 24, TFT_BLACK);
-    M5.Display.fillRect(battX + 40, battY + 6, 4, 12, TFT_BLACK);  // Battery tip
+    M5.Display.fillRect(battX + 40, battY + 6, 4, 12, TFT_BLACK);
 
-    // Battery fill level
     int fillWidth = (36 * batteryPercent) / 100;
     if (fillWidth > 0) {
         M5.Display.fillRect(battX + 2, battY + 2, fillWidth, 20, TFT_BLACK);
     }
 
-    // Battery percentage text
     M5.Display.setFont(&fonts::Font2);
     char battText[8];
     sprintf(battText, "%d%%", batteryPercent);
     M5.Display.setCursor(battX + 48, battY + 4);
     M5.Display.print(battText);
 
-    // Reset font
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);
 }
@@ -731,12 +309,10 @@ void drawTabBar() {
 int handleTabTouch(int touchX, int touchY) {
     int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
 
-    // Check if touch is in tab bar area
     if (touchY < tabY) {
-        return -1;  // Not in tab bar
+        return -1;
     }
 
-    // Check which tab was touched
     for (int i = 0; i < TAB_COUNT; i++) {
         int tabX = i * TAB_WIDTH;
         if (touchX >= tabX && touchX < tabX + TAB_WIDTH) {
@@ -744,39 +320,23 @@ int handleTabTouch(int touchX, int touchY) {
         }
     }
 
-    return -1;  // Touch in battery area or outside tabs
-}
-
-void switchTab(TabIndex newTab) {
-    if (newTab != currentTab) {
-        // Reset settings menu state when leaving settings tab
-        if (currentTab == TAB_SETTINGS) {
-            settingsState = SETTINGS_MAIN;
-        }
-
-        currentTab = newTab;
-        needsFullRedraw = true;
-        Serial.printf("Switched to tab: %s\n", TAB_LABELS[newTab]);
-    }
+    return -1;
 }
 
 // ============================================
 // WiFi & Web Server Functions
 // ============================================
 void setupWebServer() {
-    // Serve main page
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-        request->send_P(200, "text/html", HTML_PAGE);
+        request->send_P(200, "text/html", WEB_UI_HTML);
     });
 
-    // API: Get SD card info
     server.on("/api/info", HTTP_GET, [](AsyncWebServerRequest *request) {
         String json = "{\"cardSize\":" + String(SD.cardSize() / (1024 * 1024)) +
                       ",\"freeSpace\":" + String(getSDCardFreeSpace() / (1024 * 1024)) + "}";
         request->send(200, "application/json", json);
     });
 
-    // API: List files in directory
     server.on("/api/files", HTTP_GET, [](AsyncWebServerRequest *request) {
         String dir = "/books";
         if (request->hasParam("dir")) {
@@ -789,11 +349,13 @@ void setupWebServer() {
             File file = root.openNextFile();
             bool first = true;
             while (file) {
-                if (!file.isDirectory()) {
-                    if (!first) json += ",";
-                    json += "{\"name\":\"" + String(file.name()) + "\",\"size\":" + String(file.size()) + "}";
-                    first = false;
+                if (!first) json += ",";
+                if (file.isDirectory()) {
+                    json += "{\"name\":\"" + String(file.name()) + "\",\"size\":-1,\"isDir\":true}";
+                } else {
+                    json += "{\"name\":\"" + String(file.name()) + "\",\"size\":" + String(file.size()) + ",\"isDir\":false}";
                 }
+                first = false;
                 file = root.openNextFile();
             }
         }
@@ -801,7 +363,6 @@ void setupWebServer() {
         request->send(200, "application/json", json);
     });
 
-    // API: Delete file
     server.on("/api/delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
         if (request->hasParam("path")) {
             String path = request->getParam("path")->value();
@@ -815,7 +376,34 @@ void setupWebServer() {
         }
     });
 
-    // API: Upload file
+    server.on("/api/mkdir", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("path")) {
+            String path = request->getParam("path")->value();
+            if (SD.mkdir(path)) {
+                request->send(200, "text/plain", "OK");
+            } else if (SD.exists(path)) {
+                request->send(200, "text/plain", "Already exists");
+            } else {
+                request->send(500, "text/plain", "Failed");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing path");
+        }
+    });
+
+    server.on("/api/rmdir", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("path")) {
+            String path = request->getParam("path")->value();
+            if (SD.rmdir(path)) {
+                request->send(200, "text/plain", "OK");
+            } else {
+                request->send(500, "text/plain", "Failed (folder not empty?)");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing path");
+        }
+    });
+
     server.on("/api/upload", HTTP_POST,
         [](AsyncWebServerRequest *request) {
             request->send(200, "text/plain", "OK");
@@ -827,7 +415,6 @@ void setupWebServer() {
                     dir = request->getParam("dir", true)->value();
                 }
                 currentUploadPath = dir + "/" + filename;
-                Serial.printf("Upload Start: %s\n", currentUploadPath.c_str());
                 uploadFile = SD.open(currentUploadPath, FILE_WRITE);
             }
 
@@ -835,23 +422,18 @@ void setupWebServer() {
                 uploadFile.write(data, len);
             }
 
-            if (final) {
-                if (uploadFile) {
-                    uploadFile.close();
-                    Serial.printf("Upload Complete: %s (%u bytes)\n", currentUploadPath.c_str(), index + len);
-                }
+            if (final && uploadFile) {
+                uploadFile.close();
             }
         }
     );
 
-    // API: Exit WiFi mode
     server.on("/api/exit", HTTP_GET, [](AsyncWebServerRequest *request) {
         request->send(200, "text/plain", "Restarting...");
         delay(1000);
         ESP.restart();
     });
 
-    // API: Get config
     server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest *request) {
         String json = "{";
         json += "\"apSsid\":\"" + config.apSsid + "\",";
@@ -862,62 +444,44 @@ void setupWebServer() {
         request->send(200, "application/json", json);
     });
 
-    // API: Save AP config
     server.on("/api/config/ap", HTTP_POST, [](AsyncWebServerRequest *request) {},
         NULL,
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
             String body = String((char*)data).substring(0, len);
             JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, body);
-
-            if (error) {
-                request->send(400, "text/plain", "Invalid JSON");
-                return;
-            }
-
-            config.apSsid = doc["ssid"] | config.apSsid;
-            config.apPassword = doc["password"] | config.apPassword;
-
-            if (saveConfig()) {
+            if (!deserializeJson(doc, body)) {
+                config.apSsid = doc["ssid"] | config.apSsid;
+                config.apPassword = doc["password"] | config.apPassword;
+                saveConfig();
                 request->send(200, "text/plain", "OK");
             } else {
-                request->send(500, "text/plain", "Failed to save");
+                request->send(400, "text/plain", "Invalid JSON");
             }
         }
     );
 
-    // API: Save Station config
     server.on("/api/config/sta", HTTP_POST, [](AsyncWebServerRequest *request) {},
         NULL,
         [](AsyncWebServerRequest *request, uint8_t *data, size_t len, size_t index, size_t total) {
             String body = String((char*)data).substring(0, len);
             JsonDocument doc;
-            DeserializationError error = deserializeJson(doc, body);
-
-            if (error) {
-                request->send(400, "text/plain", "Invalid JSON");
-                return;
-            }
-
-            config.staSsid = doc["ssid"] | config.staSsid;
-            config.staPassword = doc["password"] | config.staPassword;
-
-            if (saveConfig()) {
+            if (!deserializeJson(doc, body)) {
+                config.staSsid = doc["ssid"] | config.staSsid;
+                config.staPassword = doc["password"] | config.staPassword;
+                saveConfig();
                 request->send(200, "text/plain", "OK");
             } else {
-                request->send(500, "text/plain", "Failed to save");
+                request->send(400, "text/plain", "Invalid JSON");
             }
         }
     );
 
     server.begin();
-    Serial.println("Web server started");
 }
 
 void startWiFiMode() {
     wifiMode = true;
 
-    // Start AP mode using config values
     WiFi.mode(WIFI_AP);
     WiFi.softAP(config.apSsid.c_str(), config.apPassword.c_str());
 
@@ -927,42 +491,57 @@ void startWiFiMode() {
 
     setupWebServer();
 
-    // Display WiFi info
     M5.Display.fillScreen(TFT_WHITE);
     M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);
 
     int y = PAD_Y;
+
+    // Back button header
     M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("WiFi File Transfer Mode");
+    M5.Display.print("< 뒤로가기");
+    M5.Display.drawLine(PAD_X, y + 35, SCREEN_WIDTH - PAD_X, y + 35, TFT_BLACK);
+    y += 50;
+
+    // Title
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("WiFi 파일 전송 모드");
     y += 60;
 
-    M5.Display.setTextSize(1.0);
     M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("1. Connect to WiFi:");
+    M5.Display.println("1. WiFi 연결:");
     y += 40;
 
-    M5.Display.setTextSize(1.0);
     M5.Display.setCursor(PAD_X + 40, y);
     M5.Display.printf("SSID: %s", config.apSsid.c_str());
     y += 35;
     M5.Display.setCursor(PAD_X + 40, y);
-    M5.Display.printf("Pass: %s", config.apPassword.c_str());
+    M5.Display.printf("비밀번호: %s", config.apPassword.c_str());
     y += 50;
 
-    M5.Display.setTextSize(1.0);
     M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("2. Open browser:");
+    M5.Display.println("2. 브라우저 열기:");
     y += 40;
 
-    M5.Display.setTextSize(1.0);
     M5.Display.setCursor(PAD_X + 40, y);
     M5.Display.printf("http://%s", IP.toString().c_str());
-    y += 60;
+    y += 80;
 
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("Touch screen to exit WiFi mode");
+    // Exit button at bottom
+    int btnW = 300;
+    int btnH = 60;
+    int btnX = (SCREEN_WIDTH - btnW) / 2;
+    int btnY = CONTENT_HEIGHT - btnH - 40;
+
+    M5.Display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    String exitText = "종료하기";
+    int textW = M5.Display.textWidth(exitText.c_str());
+    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
+    M5.Display.print(exitText);
+
+    M5.Display.setTextColor(TFT_BLACK);
 
     M5.Display.display();
 }
@@ -976,318 +555,69 @@ void stopWiFiMode() {
 }
 
 // ============================================
-// Tab Content Drawing Functions
+// Display Refresh
 // ============================================
-void drawPlaceholderContent(const char* tabName, const char* description) {
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-
-    M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
-    M5.Display.setTextColor(TFT_BLACK);
-
-    // Title - centered
-    int titleWidth = M5.Display.textWidth(tabName);
-    M5.Display.setCursor((SCREEN_WIDTH - titleWidth) / 2, CONTENT_HEIGHT / 2 - 40);
-    M5.Display.print(tabName);
-
-    // Description - centered
-    int descWidth = M5.Display.textWidth(description);
-    M5.Display.setCursor((SCREEN_WIDTH - descWidth) / 2, CONTENT_HEIGHT / 2 + 20);
-    M5.Display.print(description);
-}
-
-void drawWordTab() {
-    drawPlaceholderContent("단어 학습", "Coming soon - SRS 단어 학습");
-}
-
-void drawGrammarTab() {
-    drawPlaceholderContent("문형 학습", "Coming soon - N2/N1 문법 패턴");
-}
-
-void drawStatsTab() {
-    drawPlaceholderContent("학습 통계", "Coming soon - 학습 진행 현황");
-}
-
-// Settings menu item structure
-struct SettingsMenuItem {
-    const char* label;
-    const char* value;
-    int y;
-    int height;
-};
-
-const int SETTINGS_ITEM_HEIGHT = 55;
-const int SETTINGS_ITEMS_START_Y = 60;
-
-void drawSettingsMainMenu() {
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextColor(TFT_BLACK);
-
-    // Title
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
-    M5.Display.print("설정");
-
-    // Divider
-    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
-
-    M5.Display.setTextSize(1.0);
-    int y = SETTINGS_ITEMS_START_Y;
-
-    // Menu items
-    const char* menuItems[] = {
-        "WiFi 파일 전송",
-        "WiFi 연결 설정",
-        "화면 설정",
-        "학습 설정",
-        "시스템 설정",
-        "SD 카드 정보"
-    };
-
-    for (int i = 0; i < 6; i++) {
-        // Draw item background (alternating)
-        if (i % 2 == 0) {
-            M5.Display.fillRect(0, y, SCREEN_WIDTH, SETTINGS_ITEM_HEIGHT - 1, 0xF7BE);  // Light gray
-        }
-
-        // Draw item label
-        M5.Display.setCursor(PAD_X, y + 15);
-        M5.Display.print(menuItems[i]);
-
-        // Draw arrow
-        M5.Display.setCursor(SCREEN_WIDTH - 60, y + 15);
-        M5.Display.print(">");
-
-        // Draw bottom border
-        M5.Display.drawLine(PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, SCREEN_WIDTH - PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, 0xDEDB);
-
-        y += SETTINGS_ITEM_HEIGHT;
-    }
-
-    // SD Card info at bottom
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 30);
-    M5.Display.printf("SD: %llu MB free / %llu MB total",
-        getSDCardFreeSpace() / (1024 * 1024),
-        SD.totalBytes() / (1024 * 1024));
-
-    M5.Display.setFont(&fonts::efontKR_24);
-}
-
-void drawWiFiAPSettings() {
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextColor(TFT_BLACK);
-
-    // Title with back button
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
-    M5.Display.print("< WiFi 파일 전송");
-    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
-
-    M5.Display.setTextSize(1.0);
-    int y = SETTINGS_ITEMS_START_Y + 10;
-
-    // Current AP settings
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("현재 설정:");
-    y += 40;
-
-    M5.Display.setCursor(PAD_X + 20, y);
-    M5.Display.printf("SSID: %s", config.apSsid.c_str());
-    y += 35;
-
-    M5.Display.setCursor(PAD_X + 20, y);
-    M5.Display.printf("비밀번호: %s", config.apPassword.c_str());
-    y += 50;
-
-    // Start button
-    int btnY = y + 20;
-    int btnW = 300;
-    int btnH = 60;
-    int btnX = (SCREEN_WIDTH - btnW) / 2;
-
-    M5.Display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
-    M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.setTextSize(1.0);
-
-    int textW = M5.Display.textWidth("파일 전송 시작");
-    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
-    M5.Display.print("파일 전송 시작");
-
-    M5.Display.setTextColor(TFT_BLACK);
-    M5.Display.setTextSize(1.0);
-
-    // Instructions
-    y = btnY + btnH + 30;
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("1. Start file transfer");
-    y += 25;
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.printf("2. Connect to WiFi '%s'", config.apSsid.c_str());
-    y += 25;
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("3. Open http://192.168.4.1 in browser");
-
-    M5.Display.setFont(&fonts::efontKR_24);
-}
-
-void drawWiFiSTASettings() {
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextColor(TFT_BLACK);
-
-    // Title with back button
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
-    M5.Display.print("< WiFi 연결 설정");
-    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
-
-    M5.Display.setTextSize(1.0);
-    int y = SETTINGS_ITEMS_START_Y + 10;
-
-    // Current Station settings
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("외부 WiFi 연결:");
-    y += 40;
-
-    if (config.staSsid.length() > 0) {
-        M5.Display.setCursor(PAD_X + 20, y);
-        M5.Display.printf("SSID: %s", config.staSsid.c_str());
-        y += 35;
-
-        M5.Display.setCursor(PAD_X + 20, y);
-        M5.Display.print("상태: 설정됨");
-    } else {
-        M5.Display.setCursor(PAD_X + 20, y);
-        M5.Display.print("설정된 네트워크 없음");
-    }
-    y += 50;
-
-    // Scan button
-    int btnY = y + 20;
-    int btnW = 250;
-    int btnH = 50;
-    int btnX = (SCREEN_WIDTH - btnW) / 2;
-
-    M5.Display.drawRect(btnX, btnY, btnW, btnH, TFT_BLACK);
-    M5.Display.setTextSize(1.1);
-
-    int textW = M5.Display.textWidth("WiFi 스캔");
-    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 12);
-    M5.Display.print("WiFi 스캔");
-
-    M5.Display.setTextSize(1.0);
-
-    // Note
-    y = btnY + btnH + 40;
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("Note: WiFi scan feature coming soon.");
-    y += 25;
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("Currently use AP mode for file transfer.");
-
-    M5.Display.setFont(&fonts::efontKR_24);
-}
-
-void drawSettingsTab() {
-    switch (settingsState) {
-        case SETTINGS_MAIN:
-            drawSettingsMainMenu();
-            break;
-        case SETTINGS_WIFI_AP:
-            drawWiFiAPSettings();
-            break;
-        case SETTINGS_WIFI_STA:
-            drawWiFiSTASettings();
-            break;
-        default:
-            drawSettingsMainMenu();
-            break;
-    }
-}
-
-// ============================================
-// Display Functions
-// ============================================
-
-void drawReadTab() {
-    drawPlaceholderContent("읽기", "Coming soon - epub 리더");
-}
-
-void drawCurrentTabContent() {
-    switch (currentTab) {
-        case TAB_WORD:
-            drawWordTab();
-            break;
-        case TAB_GRAMMAR:
-            drawGrammarTab();
-            break;
-        case TAB_COPY:
-            copyScreen.draw();
-            break;
-        case TAB_READ:
-            drawReadTab();
-            break;
-        case TAB_STATS:
-            drawStatsTab();
-            break;
-        case TAB_SETTINGS:
-            drawSettingsTab();
-            break;
-    }
-}
-
-// Track refreshes for periodic full clear
 int refreshCount = 0;
-const int FULL_CLEAR_INTERVAL = 5;  // Full clear every 5 refreshes
+const int FULL_CLEAR_INTERVAL = 3;  // More frequent full clear to reduce ghosting
 
 void refreshDisplay() {
-    if (needsFullRedraw) {
-        // Periodic full clear to reduce ghosting
+    if (needsFullRedraw || ScreenManager::instance().needsRedraw()) {
         refreshCount++;
+
+        // Always use quality mode for main content
+        M5.Display.setEpdMode(epd_mode_t::epd_quality);
+
+        // Full clear cycle to remove vertical ghosting
         if (refreshCount >= FULL_CLEAR_INTERVAL) {
-            M5.Display.clearDisplay();
+            // Complete clear sequence: black → white → content
+            M5.Display.fillScreen(TFT_BLACK);
+            M5.Display.display();
+            M5.Display.waitDisplay();
+            delay(50);
+
+            M5.Display.fillScreen(TFT_WHITE);
+            M5.Display.display();
             M5.Display.waitDisplay();
             refreshCount = 0;
+        } else {
+            // Normal clear
+            M5.Display.clearDisplay();
+            M5.Display.waitDisplay();
         }
 
         M5.Display.fillScreen(TFT_WHITE);
-        drawCurrentTabContent();
-        drawTabBar();
-        M5.Display.display();
-        M5.Display.waitDisplay();  // Wait for e-ink refresh to complete
-        needsFullRedraw = false;
-        needsTabRedraw = false;
-    } else if (needsTabRedraw) {
+        ScreenManager::instance().draw();
         drawTabBar();
         M5.Display.display();
         M5.Display.waitDisplay();
+        needsFullRedraw = false;
+        needsTabRedraw = false;
+    } else if (needsTabRedraw) {
+        // Tab-only update can use faster mode
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        drawTabBar();
+        M5.Display.display();
+        M5.Display.waitDisplay();
+        M5.Display.setEpdMode(epd_mode_t::epd_quality);
         needsTabRedraw = false;
     }
 }
 
 // ============================================
-// Setup & Loop
+// Setup
 // ============================================
 void setup() {
-    // Initialize M5Unified (handles display, touch, RTC, etc.)
     auto cfg = M5.config();
-    cfg.clear_display = true;  // Clear display on start
+    cfg.clear_display = true;
     M5.begin(cfg);
 
     Serial.println("Papers3 JP Learner Starting...");
 
     // Configure display
-    Serial.println("Configuring M5.Display...");
-    M5.Display.setRotation(1);  // Landscape mode
+    M5.Display.setRotation(1);
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
 
-    // E-ink full clear cycle (removes ghosting and vertical lines)
-    Serial.println("Clearing e-ink M5.Display...");
+    // E-ink full clear cycle
     M5.Display.fillScreen(TFT_BLACK);
     M5.Display.display();
     M5.Display.waitDisplay();
@@ -1299,181 +629,73 @@ void setup() {
     M5.Display.setTextColor(TFT_BLACK);
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);
-    Serial.println("Display configured OK");
 
-    // Initialize LittleFS (for config and default font)
-    Serial.println("Initializing LittleFS...");
+    // Initialize LittleFS
     if (!LittleFS.begin(false)) {
-        Serial.println("LittleFS mount failed, formatting...");
-        if (!LittleFS.format()) {
-            Serial.println("LittleFS format failed!");
-        } else {
-            Serial.println("LittleFS formatted OK");
-            if (!LittleFS.begin(false)) {
-                Serial.println("LittleFS mount after format failed!");
-            } else {
-                Serial.println("LittleFS mounted after format");
-            }
+        if (LittleFS.format()) {
+            LittleFS.begin(false);
         }
-    } else {
-        Serial.println("LittleFS mounted OK");
-    }
-
-    // Test LittleFS write capability
-    Serial.println("Testing LittleFS write...");
-    File testFile = LittleFS.open("/test.txt", "w");
-    if (testFile) {
-        testFile.println("test");
-        testFile.close();
-        LittleFS.remove("/test.txt");
-        Serial.println("LittleFS write test OK");
-    } else {
-        Serial.println("LittleFS write test FAILED!");
     }
 
     // Load configuration
-    Serial.println("Loading config...");
     loadConfig();
 
     // Initialize SD Card
-    Serial.println("Initializing SD Card...");
-    yield();  // Feed watchdog
+    yield();
     sdCardMounted = initSDCard();
 
     if (!sdCardMounted) {
-        Serial.println("SD card mount failed!");
         showSDCardError("SD card not detected.");
         return;
     }
-    Serial.println("SD Card mounted OK");
 
-    // Ensure directory structure
-    Serial.println("Creating directories...");
-    yield();  // Feed watchdog
+    yield();
     if (!ensureDirectories()) {
         showSDCardError("Failed to create directories.");
         return;
     }
 
-    Serial.printf("SD Card Free Space: %llu MB\n", getSDCardFreeSpace() / (1024 * 1024));
-
-    // Initialize battery reading
-    Serial.println("Initializing battery...");
+    // Initialize battery
     analogReadResolution(12);
     updateBattery();
 
-    // Load 필사 content
-    Serial.println("Loading content...");
-    yield();  // Feed watchdog
-    copyScreen.loadTodayContent();
+    // ============================================
+    // Register Screens with ScreenManager
+    // ============================================
+    ScreenManager& sm = ScreenManager::instance();
 
-    // Draw initial screen with tab bar
-    Serial.println("Drawing initial screen...");
+    sm.registerScreen(TAB_WORD, &wordScreen);
+    sm.registerScreen(TAB_GRAMMAR, &grammarScreen);
+    sm.registerScreen(TAB_COPY, &copyScreen);
+    sm.registerScreen(TAB_READ, &readScreen);
+    sm.registerScreen(TAB_STATS, &statsScreen);
+    sm.registerScreen(TAB_SETTINGS, &settingsScreen);
+
+    // Set WiFi callback for settings screen
+    settingsScreen.setWiFiModeCallback(startWiFiMode);
+
+    // Switch to initial tab (calls onEnter which loads content)
+    sm.switchTo(TAB_COPY);
+
+    // Draw initial screen
     needsFullRedraw = true;
     refreshDisplay();
     Serial.println("Setup complete!");
 }
 
-// Copy screen drag state is handled in loop()
-
-void handleSettingsTabTouch(int touchX, int touchY) {
-    switch (settingsState) {
-        case SETTINGS_MAIN: {
-            // Check which menu item was touched
-            if (touchY >= SETTINGS_ITEMS_START_Y && touchY < SETTINGS_ITEMS_START_Y + 6 * SETTINGS_ITEM_HEIGHT) {
-                int itemIndex = (touchY - SETTINGS_ITEMS_START_Y) / SETTINGS_ITEM_HEIGHT;
-                Serial.printf("Settings item touched: %d\n", itemIndex);
-
-                switch (itemIndex) {
-                    case 0:  // WiFi 파일 전송
-                        settingsState = SETTINGS_WIFI_AP;
-                        needsFullRedraw = true;
-                        break;
-                    case 1:  // WiFi 연결 설정
-                        settingsState = SETTINGS_WIFI_STA;
-                        needsFullRedraw = true;
-                        break;
-                    case 2:  // 화면 설정
-                        // TODO: Implement display settings
-                        break;
-                    case 3:  // 학습 설정
-                        // TODO: Implement learning settings
-                        break;
-                    case 4:  // 시스템 설정
-                        // TODO: Implement system settings
-                        break;
-                    case 5:  // SD 카드 정보
-                        // Just show info, no action needed
-                        break;
-                }
-            }
-            break;
-        }
-
-        case SETTINGS_WIFI_AP: {
-            // Back button (top area)
-            if (touchY < 50) {
-                settingsState = SETTINGS_MAIN;
-                needsFullRedraw = true;
-                break;
-            }
-
-            // Start file transfer button
-            int btnY = SETTINGS_ITEMS_START_Y + 10 + 40 + 35 + 50 + 20;  // Calculate button Y
-            int btnH = 60;
-            int btnW = 300;
-            int btnX = (SCREEN_WIDTH - btnW) / 2;
-
-            if (touchY >= btnY && touchY <= btnY + btnH &&
-                touchX >= btnX && touchX <= btnX + btnW) {
-                startWiFiMode();
-            }
-            break;
-        }
-
-        case SETTINGS_WIFI_STA: {
-            // Back button (top area)
-            if (touchY < 50) {
-                settingsState = SETTINGS_MAIN;
-                needsFullRedraw = true;
-            }
-            // WiFi scan button - TODO: implement
-            break;
-        }
-
-        default:
-            settingsState = SETTINGS_MAIN;
-            needsFullRedraw = true;
-            break;
-    }
-}
-
-void handleContentTouch(int touchX, int touchY) {
-    switch (currentTab) {
-        case TAB_COPY:
-            // Drag scroll handled separately in loop()
-            break;
-        case TAB_SETTINGS:
-            handleSettingsTabTouch(touchX, touchY);
-            break;
-        default:
-            // Other tabs - no action yet
-            break;
-    }
-}
-
+// ============================================
+// Loop
+// ============================================
 void loop() {
-    M5.update();  // Update M5Unified state (touch, buttons, etc.)
+    M5.update();
 
     if (!sdCardMounted) {
         delay(1000);
         return;
     }
 
-    // Update battery periodically
     updateBattery();
 
-    // Get touch state
     auto touch = M5.Touch.getDetail();
 
     // WiFi mode handling
@@ -1481,8 +703,6 @@ void loop() {
         if (touch.wasPressed()) {
             delay(300);
             stopWiFiMode();
-
-            // Reload content and return to tab view
             copyScreen.loadTodayContent();
             needsFullRedraw = true;
         }
@@ -1490,57 +710,41 @@ void loop() {
         return;
     }
 
-    // Handle drag scroll for copy screen
-    if (currentTab == TAB_COPY) {
-        if (touch.wasPressed()) {
-            int touchY = touch.y;
-            int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    ScreenManager& sm = ScreenManager::instance();
 
-            if (touchY < tabY) {
-                // Content area - start drag
-                copyScreen.handleTouchStart(touch.x, touch.y);
-            } else {
-                // Tab bar
-                int tabTouched = handleTabTouch(touch.x, touch.y);
-                if (tabTouched >= 0) {
-                    switchTab((TabIndex)tabTouched);
-                }
-            }
-        } else if (touch.isPressed()) {
-            // Dragging
-            if (copyScreen.handleTouchMove(touch.x, touch.y)) {
+    // Touch handling
+    if (touch.wasPressed()) {
+        int touchY = touch.y;
+        int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+
+        if (touchY < tabY) {
+            // Content area touch
+            if (sm.handleTouchStart(touch.x, touch.y)) {
                 needsFullRedraw = true;
-                refreshDisplay();
             }
-        } else if (touch.wasReleased()) {
-            // End drag
-            if (copyScreen.handleTouchEnd()) {
+        } else {
+            // Tab bar touch
+            int tabTouched = handleTabTouch(touch.x, touch.y);
+            if (tabTouched >= 0) {
+                sm.switchTo((TabIndex)tabTouched);
                 needsFullRedraw = true;
+                // Force full clear on tab switch to eliminate ghosting
+                refreshCount = FULL_CLEAR_INTERVAL;
             }
         }
-    } else {
-        // Other tabs - simple touch handling
-        if (touch.wasPressed()) {
-            delay(200);  // Debounce
-
-            int touchX = touch.x;
-            int touchY = touch.y;
-
-            // Check if touch is in tab bar
-            int tabTouched = handleTabTouch(touchX, touchY);
-
-            if (tabTouched >= 0) {
-                // Tab was touched
-                switchTab((TabIndex)tabTouched);
-            } else {
-                // Content area was touched
-                handleContentTouch(touchX, touchY);
-            }
+    } else if (touch.isPressed()) {
+        // Dragging
+        if (sm.handleTouchMove(touch.x, touch.y)) {
+            needsFullRedraw = true;
+            refreshDisplay();
+        }
+    } else if (touch.wasReleased()) {
+        // End drag
+        if (sm.handleTouchEnd()) {
+            needsFullRedraw = true;
         }
     }
 
-    // Refresh display if needed
     refreshDisplay();
-
-    delay(10);  // Faster response for drag
+    delay(10);
 }

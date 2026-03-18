@@ -25,12 +25,37 @@ AsyncWebServer server(80);
 // ============================================
 const int SCREEN_WIDTH = 960;
 const int SCREEN_HEIGHT = 540;
-const int TAB_BAR_HEIGHT = 70;
+const int TAB_BAR_HEIGHT = 60;
 const int CONTENT_HEIGHT = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+const int CONTENT_Y = 0;  // Content starts at top
 
 const int PAD_X = 30;
-const int PAD_Y = 30;
+const int PAD_Y = 20;
 const int LINE_SPACING = 16;
+
+// Tab configuration
+const int TAB_COUNT = 6;
+const int BATTERY_WIDTH = 80;
+const int TAB_WIDTH = (SCREEN_WIDTH - BATTERY_WIDTH) / TAB_COUNT;  // ~146px each
+
+// Tab indices
+enum TabIndex {
+    TAB_WORD = 0,      // 단어
+    TAB_GRAMMAR = 1,   // 문형
+    TAB_COPY = 2,      // 필사
+    TAB_READ = 3,      // 읽기
+    TAB_STATS = 4,     // 통계
+    TAB_SETTINGS = 5   // 설정
+};
+
+const char* TAB_LABELS[] = {
+    "단어",
+    "문형",
+    "필사",
+    "읽기",
+    "통계",
+    "설정"
+};
 
 // SD Card directories
 const char* DIR_BOOKS = "/books";
@@ -47,13 +72,25 @@ const char* AP_PASS = "12345678";
 // ============================================
 bool sdCardMounted = false;
 bool wifiMode = false;
+TabIndex currentTab = TAB_COPY;  // Start with 필사 (transcription)
+bool needsFullRedraw = true;
+bool needsTabRedraw = false;
+
+// 필사 (Copy/Transcription) state
 std::vector<String> sentences;
 String todayTitle = "";
 String todayAuthor = "";
 String todayDate = "";
 int currentPage = -1;
+
+// WiFi state
 String currentUploadPath = "";
 File uploadFile;
+
+// Battery state
+int batteryPercent = 100;
+unsigned long lastBatteryCheck = 0;
+const unsigned long BATTERY_CHECK_INTERVAL = 60000;  // Check every minute
 
 // ============================================
 // HTML Page
@@ -388,6 +425,131 @@ uint64_t getSDCardFreeSpace() {
 }
 
 // ============================================
+// Battery Functions
+// ============================================
+int readBatteryPercent() {
+    // M5Paper S3 battery voltage reading
+    // Battery pin is typically GPIO10 on M5Paper S3
+    // Full charge ~4.2V, Empty ~3.0V
+    // Using voltage divider, ADC reads half of actual voltage
+
+    int adcValue = analogRead(10);
+    float voltage = (adcValue / 4095.0) * 3.3 * 2;  // Voltage divider factor
+
+    // Convert voltage to percentage (3.0V = 0%, 4.2V = 100%)
+    int percent = (int)((voltage - 3.0) / (4.2 - 3.0) * 100);
+    percent = constrain(percent, 0, 100);
+
+    return percent;
+}
+
+void updateBattery() {
+    unsigned long now = millis();
+    if (now - lastBatteryCheck >= BATTERY_CHECK_INTERVAL || lastBatteryCheck == 0) {
+        batteryPercent = readBatteryPercent();
+        lastBatteryCheck = now;
+        needsTabRedraw = true;
+    }
+}
+
+// ============================================
+// Tab Bar Functions
+// ============================================
+void drawTabBar() {
+    int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+
+    // Draw tab bar background
+    display.fillRect(0, tabY, SCREEN_WIDTH, TAB_BAR_HEIGHT, TFT_WHITE);
+
+    // Draw top border line
+    display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
+
+    // Draw each tab
+    display.setFont(&fonts::efontJA_16);
+    display.setTextSize(1.0);
+
+    for (int i = 0; i < TAB_COUNT; i++) {
+        int tabX = i * TAB_WIDTH;
+
+        // Highlight current tab
+        if (i == currentTab) {
+            display.fillRect(tabX + 2, tabY + 2, TAB_WIDTH - 4, TAB_BAR_HEIGHT - 4, TFT_BLACK);
+            display.setTextColor(TFT_WHITE);
+        } else {
+            display.setTextColor(TFT_BLACK);
+        }
+
+        // Draw tab label centered
+        int labelWidth = display.textWidth(TAB_LABELS[i]);
+        int labelX = tabX + (TAB_WIDTH - labelWidth) / 2;
+        int labelY = tabY + (TAB_BAR_HEIGHT - display.fontHeight()) / 2;
+
+        display.setCursor(labelX, labelY);
+        display.print(TAB_LABELS[i]);
+
+        // Draw vertical separator (except for last tab)
+        if (i < TAB_COUNT - 1) {
+            display.drawLine(tabX + TAB_WIDTH, tabY + 8, tabX + TAB_WIDTH, tabY + TAB_BAR_HEIGHT - 8, 0x7BEF);  // Gray color
+        }
+    }
+
+    // Reset text color
+    display.setTextColor(TFT_BLACK);
+
+    // Draw battery indicator
+    int battX = TAB_COUNT * TAB_WIDTH + 10;
+    int battY = tabY + (TAB_BAR_HEIGHT - 24) / 2;
+
+    // Battery icon outline
+    display.drawRect(battX, battY, 40, 24, TFT_BLACK);
+    display.fillRect(battX + 40, battY + 6, 4, 12, TFT_BLACK);  // Battery tip
+
+    // Battery fill level
+    int fillWidth = (36 * batteryPercent) / 100;
+    if (fillWidth > 0) {
+        display.fillRect(battX + 2, battY + 2, fillWidth, 20, TFT_BLACK);
+    }
+
+    // Battery percentage text
+    display.setFont(&fonts::Font2);
+    char battText[8];
+    sprintf(battText, "%d%%", batteryPercent);
+    display.setCursor(battX + 48, battY + 4);
+    display.print(battText);
+
+    // Reset font
+    display.setFont(&fonts::efontJA_24);
+    display.setTextSize(1.4);
+}
+
+int handleTabTouch(int touchX, int touchY) {
+    int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+
+    // Check if touch is in tab bar area
+    if (touchY < tabY) {
+        return -1;  // Not in tab bar
+    }
+
+    // Check which tab was touched
+    for (int i = 0; i < TAB_COUNT; i++) {
+        int tabX = i * TAB_WIDTH;
+        if (touchX >= tabX && touchX < tabX + TAB_WIDTH) {
+            return i;
+        }
+    }
+
+    return -1;  // Touch in battery area or outside tabs
+}
+
+void switchTab(TabIndex newTab) {
+    if (newTab != currentTab) {
+        currentTab = newTab;
+        needsFullRedraw = true;
+        Serial.printf("Switched to tab: %s\n", TAB_LABELS[newTab]);
+    }
+}
+
+// ============================================
 // WiFi & Web Server Functions
 // ============================================
 void setupWebServer() {
@@ -596,6 +758,46 @@ bool loadTodaySentences() {
 }
 
 // ============================================
+// Tab Content Drawing Functions
+// ============================================
+void drawPlaceholderContent(const char* tabName, const char* description) {
+    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+
+    display.setFont(&fonts::efontJA_24);
+    display.setTextSize(1.5);
+    display.setTextColor(TFT_BLACK);
+
+    // Title
+    int titleWidth = display.textWidth(tabName);
+    display.setCursor((SCREEN_WIDTH - titleWidth) / 2, CONTENT_HEIGHT / 2 - 50);
+    display.print(tabName);
+
+    // Description
+    display.setTextSize(1.0);
+    int descWidth = display.textWidth(description);
+    display.setCursor((SCREEN_WIDTH - descWidth) / 2, CONTENT_HEIGHT / 2 + 10);
+    display.print(description);
+
+    display.setTextSize(1.4);
+}
+
+void drawWordTab() {
+    drawPlaceholderContent("단어 학습", "Coming soon - SRS 단어 학습");
+}
+
+void drawGrammarTab() {
+    drawPlaceholderContent("문형 학습", "Coming soon - N2/N1 문법 패턴");
+}
+
+void drawStatsTab() {
+    drawPlaceholderContent("학습 통계", "Coming soon - 학습 진행 현황");
+}
+
+void drawSettingsTab() {
+    drawPlaceholderContent("설정", "Touch LEFT: WiFi 파일 전송\nTouch RIGHT: Coming soon");
+}
+
+// ============================================
 // Display Functions
 // ============================================
 int printWrapped(const String& text, int x, int y, int maxW) {
@@ -635,17 +837,21 @@ int printWrapped(const String& text, int x, int y, int maxW) {
     return y + fontH;
 }
 
-void showTitlePage() {
-    display.fillScreen(TFT_WHITE);
-    int contentW = display.width() - PAD_X * 2;
+void drawCopyTitlePage() {
+    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    int contentW = SCREEN_WIDTH - PAD_X * 2;
     int y = PAD_Y;
     int fontH = display.fontHeight();
+
+    display.setFont(&fonts::efontJA_24);
+    display.setTextSize(1.4);
+    display.setTextColor(TFT_BLACK);
 
     display.setCursor(PAD_X, y);
     display.println(todayDate);
     y += fontH + 16;
 
-    display.drawLine(PAD_X, y, display.width() - PAD_X, y, TFT_BLACK);
+    display.drawLine(PAD_X, y, SCREEN_WIDTH - PAD_X, y, TFT_BLACK);
     y += 20;
 
     y = printWrapped(todayTitle, PAD_X, y, contentW);
@@ -655,42 +861,93 @@ void showTitlePage() {
     display.println(todayAuthor);
 
     int totalPages = sentences.size() + 1;
-    display.setCursor(display.width() - 120, CONTENT_HEIGHT - PAD_Y);
+    display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
     display.printf("1 / %d", totalPages);
-    display.display();
 }
 
-void showPage(int idx) {
-    display.fillScreen(TFT_WHITE);
+void drawCopyContentPage(int idx) {
+    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
 
-    int contentW = display.width() - PAD_X * 2;
+    display.setFont(&fonts::efontJA_24);
+    display.setTextSize(1.4);
+    display.setTextColor(TFT_BLACK);
+
+    int contentW = SCREEN_WIDTH - PAD_X * 2;
     printWrapped(sentences[idx], PAD_X, PAD_Y, contentW);
 
     int totalPages = sentences.size() + 1;
     char info[20];
     sprintf(info, "%d / %d", idx + 2, totalPages);
-    display.setCursor(display.width() - 120, CONTENT_HEIGHT - PAD_Y);
+    display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
     display.println(info);
-    display.display();
 }
 
-void showMainMenu() {
-    display.fillScreen(TFT_WHITE);
-    display.setTextColor(TFT_BLACK);
-    display.setTextSize(1.2);
+void drawCopyTab() {
+    if (sentences.size() == 0) {
+        // No content loaded
+        display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+        display.setFont(&fonts::efontJA_24);
+        display.setTextSize(1.2);
+        display.setTextColor(TFT_BLACK);
 
-    int centerY = CONTENT_HEIGHT / 2;
+        int centerY = CONTENT_HEIGHT / 2;
 
-    display.setCursor(PAD_X, centerY - 60);
-    display.println("No data for today");
+        display.setCursor(PAD_X, centerY - 40);
+        display.println("오늘의 필사 내용이 없습니다");
 
-    display.setCursor(PAD_X, centerY - 20);
-    display.println("Touch LEFT side: Start WiFi File Transfer");
+        display.setCursor(PAD_X, centerY + 10);
+        display.println("설정 탭에서 WiFi 파일 전송으로 콘텐츠를 업로드하세요");
 
-    display.setCursor(PAD_X, centerY + 20);
-    display.println("Touch RIGHT side: Retry load content");
+        display.setTextSize(1.4);
+    } else {
+        if (currentPage == -1) {
+            drawCopyTitlePage();
+        } else {
+            drawCopyContentPage(currentPage);
+        }
+    }
+}
 
-    display.display();
+void drawReadTab() {
+    drawPlaceholderContent("읽기", "Coming soon - epub 리더");
+}
+
+void drawCurrentTabContent() {
+    switch (currentTab) {
+        case TAB_WORD:
+            drawWordTab();
+            break;
+        case TAB_GRAMMAR:
+            drawGrammarTab();
+            break;
+        case TAB_COPY:
+            drawCopyTab();
+            break;
+        case TAB_READ:
+            drawReadTab();
+            break;
+        case TAB_STATS:
+            drawStatsTab();
+            break;
+        case TAB_SETTINGS:
+            drawSettingsTab();
+            break;
+    }
+}
+
+void refreshDisplay() {
+    if (needsFullRedraw) {
+        display.fillScreen(TFT_WHITE);
+        drawCurrentTabContent();
+        drawTabBar();
+        display.display();
+        needsFullRedraw = false;
+        needsTabRedraw = false;
+    } else if (needsTabRedraw) {
+        drawTabBar();
+        display.display();
+        needsTabRedraw = false;
+    }
 }
 
 // ============================================
@@ -730,11 +987,52 @@ void setup() {
 
     Serial.printf("SD Card Free Space: %llu MB\n", getSDCardFreeSpace() / (1024 * 1024));
 
-    // Load content
-    if (loadTodaySentences()) {
-        showTitlePage();
-    } else {
-        showMainMenu();
+    // Initialize battery reading
+    analogReadResolution(12);
+    updateBattery();
+
+    // Load 필사 content
+    loadTodaySentences();
+
+    // Draw initial screen with tab bar
+    needsFullRedraw = true;
+    refreshDisplay();
+}
+
+void handleCopyTabTouch(int touchX, int touchY) {
+    // Page navigation for 필사 tab
+    if (sentences.size() > 0) {
+        if (currentPage == -1) {
+            currentPage = 0;
+        } else {
+            currentPage++;
+            if (currentPage >= (int)sentences.size()) {
+                currentPage = -1;
+            }
+        }
+        needsFullRedraw = true;
+    }
+}
+
+void handleSettingsTabTouch(int touchX, int touchY) {
+    // Left side - WiFi mode
+    if (touchX < SCREEN_WIDTH / 2) {
+        startWiFiMode();
+    }
+    // Right side - future settings menu
+}
+
+void handleContentTouch(int touchX, int touchY) {
+    switch (currentTab) {
+        case TAB_COPY:
+            handleCopyTabTouch(touchX, touchY);
+            break;
+        case TAB_SETTINGS:
+            handleSettingsTabTouch(touchX, touchY);
+            break;
+        default:
+            // Other tabs - no action yet
+            break;
     }
 }
 
@@ -744,6 +1042,9 @@ void loop() {
         return;
     }
 
+    // Update battery periodically
+    updateBattery();
+
     lgfx::touch_point_t tp;
 
     // WiFi mode handling
@@ -752,49 +1053,36 @@ void loop() {
             delay(300);
             stopWiFiMode();
 
-            // Reload content
-            if (loadTodaySentences()) {
-                showTitlePage();
-            } else {
-                showMainMenu();
-            }
+            // Reload content and return to tab view
+            loadTodaySentences();
+            needsFullRedraw = true;
             while (display.getTouch(&tp, 1)) delay(10);
         }
         delay(50);
         return;
     }
 
-    // Normal mode handling
+    // Normal mode - tab-based navigation
     if (display.getTouch(&tp, 1)) {
-        delay(300);
+        delay(200);  // Debounce
 
-        // Check if we're on main menu (no content loaded)
-        if (sentences.size() == 0) {
-            if (tp.x < SCREEN_WIDTH / 2) {
-                // Left side - start WiFi mode
-                startWiFiMode();
-            } else {
-                // Right side - retry loading
-                if (loadTodaySentences()) {
-                    showTitlePage();
-                }
-            }
+        // Check if touch is in tab bar
+        int tabTouched = handleTabTouch(tp.x, tp.y);
+
+        if (tabTouched >= 0) {
+            // Tab was touched
+            switchTab((TabIndex)tabTouched);
         } else {
-            // Normal page navigation
-            if (currentPage == -1) {
-                currentPage = 0;
-                showPage(currentPage);
-            } else {
-                currentPage++;
-                if (currentPage >= (int)sentences.size()) {
-                    currentPage = -1;
-                    showTitlePage();
-                } else {
-                    showPage(currentPage);
-                }
-            }
+            // Content area was touched
+            handleContentTouch(tp.x, tp.y);
         }
+
+        // Wait for touch release
         while (display.getTouch(&tp, 1)) delay(10);
     }
+
+    // Refresh display if needed
+    refreshDisplay();
+
     delay(50);
 }

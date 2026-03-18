@@ -1,20 +1,19 @@
-#include "CopyScreen.h"
-#include "Config.h"
+#include "screens/CopyScreen.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
 
-// Header configuration
-const int COPY_HEADER_HEIGHT = 50;
-const int SCROLL_BAR_WIDTH = 8;
-const int SCROLL_THRESHOLD = 10;  // Minimum drag distance to trigger scroll
+// Line spacing constant
+constexpr int LINE_SPACING = 16;
 
 CopyScreen::CopyScreen()
-    : scrollY(0)
-    , contentHeight(0)
-    , visibleHeight(CONTENT_HEIGHT - COPY_HEADER_HEIGHT)
-    , lastTouchY(0)
-    , isDragging(false) {
+    : ScrollableScreen() {
+}
+
+void CopyScreen::onEnter() {
+    ScrollableScreen::onEnter();
+    // Reload content when entering screen
+    loadTodayContent();
 }
 
 int CopyScreen::getDayOfYear(int month, int day) {
@@ -33,7 +32,7 @@ bool CopyScreen::loadTodayContent() {
 
     char target[8];
     sprintf(target, "#%03d", dayOfYear);
-    date = String(dt.date.month) + "月" + String(dt.date.date) + "日";
+    _date = String(dt.date.month) + "月" + String(dt.date.date) + "日";
 
     Serial.printf("CopyScreen: Loading day %d (%s)\n", dayOfYear, target);
 
@@ -52,9 +51,9 @@ bool CopyScreen::loadTodayContent() {
     }
 
     bool found = false;
-    paragraphs.clear();
-    title = "";
-    author = "";
+    _paragraphs.clear();
+    _title = "";
+    _author = "";
 
     while (f.available()) {
         String line = f.readStringUntil('\n');
@@ -71,42 +70,43 @@ bool CopyScreen::loadTodayContent() {
         if (!found) continue;
 
         if (line.startsWith("TITLE:")) {
-            title = line.substring(6);
-            title.trim();
+            _title = line.substring(6);
+            _title.trim();
         } else if (line.startsWith("AUTHOR:")) {
-            author = line.substring(7);
-            author.trim();
+            _author = line.substring(7);
+            _author.trim();
         } else if (line.length() > 0) {
-            paragraphs.push_back(line);
+            _paragraphs.push_back(line);
         }
     }
     f.close();
 
     // Reset scroll on new content
-    scrollY = 0;
-    contentHeight = calculateContentHeight();
+    resetScroll();
+    _contentHeight = calculateContentHeight();
 
     Serial.printf("CopyScreen: Loaded '%s' by %s, %d paragraphs, height=%d\n",
-                  title.c_str(), author.c_str(), paragraphs.size(), contentHeight);
+                  _title.c_str(), _author.c_str(), _paragraphs.size(), _contentHeight);
 
-    return paragraphs.size() > 0;
+    requestRedraw();
+    return _paragraphs.size() > 0;
 }
 
 int CopyScreen::calculateContentHeight() {
-    if (paragraphs.empty()) return 0;
+    if (_paragraphs.empty()) return 0;
 
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(1.0);
 
     int fontH = M5.Display.fontHeight();
-    int contentW = SCREEN_WIDTH - PAD_X * 2 - SCROLL_BAR_WIDTH;
+    int contentW = SCREEN_WIDTH - PAD_X * 2 - getScrollBarWidth();
     int totalHeight = PAD_Y;  // Top padding
 
     // Title section
     totalHeight += fontH * 1.5 + 30;  // Title + author + spacing
 
     // Each paragraph
-    for (const auto& para : paragraphs) {
+    for (const auto& para : _paragraphs) {
         // Estimate wrapped height
         int paraWidth = M5.Display.textWidth(para.c_str());
         int lines = (paraWidth / contentW) + 1;
@@ -118,33 +118,34 @@ int CopyScreen::calculateContentHeight() {
 }
 
 void CopyScreen::drawHeader() {
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, COPY_HEADER_HEIGHT, TFT_WHITE);
+    int headerHeight = getHeaderHeight();
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, headerHeight, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(1.0);
     M5.Display.setTextColor(TFT_BLACK);
 
     int fontH = M5.Display.fontHeight();
-    int headerY = (COPY_HEADER_HEIGHT - fontH) / 2;
+    int headerY = (headerHeight - fontH) / 2;
 
     // Date on the right
-    int dateWidth = M5.Display.textWidth(date.c_str());
+    int dateWidth = M5.Display.textWidth(_date.c_str());
     M5.Display.setCursor(SCREEN_WIDTH - PAD_X - dateWidth, headerY);
-    M5.Display.print(date);
+    M5.Display.print(_date);
 
     // Author before date
-    if (author.length() > 0) {
-        int authorWidth = M5.Display.textWidth(author.c_str());
+    if (_author.length() > 0) {
+        int authorWidth = M5.Display.textWidth(_author.c_str());
         int authorX = SCREEN_WIDTH - PAD_X - dateWidth - 40 - authorWidth;
         if (authorX > 450) {
             M5.Display.setCursor(authorX, headerY);
-            M5.Display.print(author);
+            M5.Display.print(_author);
         }
     }
 
     // Title on the left (truncate if needed)
-    if (title.length() > 0) {
-        String displayTitle = title;
+    if (_title.length() > 0) {
+        String displayTitle = _title;
         int maxTitleWidth = 400;
         while (M5.Display.textWidth(displayTitle.c_str()) > maxTitleWidth && displayTitle.length() > 6) {
             displayTitle = displayTitle.substring(0, displayTitle.length() - 4) + "...";
@@ -154,11 +155,12 @@ void CopyScreen::drawHeader() {
     }
 
     // Separator line
-    M5.Display.drawLine(PAD_X, COPY_HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, COPY_HEADER_HEIGHT - 1, TFT_BLACK);
+    M5.Display.drawLine(PAD_X, headerHeight - 1, SCREEN_WIDTH - PAD_X, headerHeight - 1, TFT_BLACK);
 }
 
 int CopyScreen::printWrappedAt(const String& text, int x, int y, int maxWidth) {
     int fontH = M5.Display.fontHeight();
+    int headerHeight = getHeaderHeight();
     int currentY = y;
     int bytePos = 0;
     int byteLen = text.length();
@@ -183,7 +185,7 @@ int CopyScreen::printWrappedAt(const String& text, int x, int y, int maxWidth) {
         if (lineEnd == bytePos) lineEnd += 1;
 
         // Only draw if visible
-        if (currentY >= COPY_HEADER_HEIGHT - fontH && currentY < CONTENT_HEIGHT) {
+        if (currentY >= headerHeight - fontH && currentY < CONTENT_HEIGHT) {
             M5.Display.setCursor(x, currentY);
             M5.Display.print(text.substring(bytePos, lineEnd));
         }
@@ -196,131 +198,78 @@ int CopyScreen::printWrappedAt(const String& text, int x, int y, int maxWidth) {
 }
 
 void CopyScreen::drawContent() {
+    int headerHeight = getHeaderHeight();
+    int visibleHeight = getVisibleHeight();
+
     // Clear content area (below header)
-    M5.Display.fillRect(0, COPY_HEADER_HEIGHT, SCREEN_WIDTH - SCROLL_BAR_WIDTH, visibleHeight, TFT_WHITE);
+    M5.Display.fillRect(0, headerHeight, SCREEN_WIDTH - getScrollBarWidth(), visibleHeight, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(1.0);
     M5.Display.setTextColor(TFT_BLACK);
 
     int fontH = M5.Display.fontHeight();
-    int contentW = SCREEN_WIDTH - PAD_X * 2 - SCROLL_BAR_WIDTH;
+    int contentW = SCREEN_WIDTH - PAD_X * 2 - getScrollBarWidth();
 
     // Apply scroll offset
-    int y = COPY_HEADER_HEIGHT + PAD_Y - scrollY;
+    int y = headerHeight + PAD_Y - _scrollY;
 
     // Title (larger)
     M5.Display.setTextSize(1.2);
-    if (y > COPY_HEADER_HEIGHT - 40 && y < CONTENT_HEIGHT) {
+    if (y > headerHeight - 40 && y < CONTENT_HEIGHT) {
         M5.Display.setCursor(PAD_X, y);
-        M5.Display.print(title);
+        M5.Display.print(_title);
     }
     y += fontH * 1.5;
 
     // Author
     M5.Display.setTextSize(1.0);
-    if (y > COPY_HEADER_HEIGHT - 30 && y < CONTENT_HEIGHT) {
+    if (y > headerHeight - 30 && y < CONTENT_HEIGHT) {
         M5.Display.setCursor(PAD_X, y);
         M5.Display.print("― ");
-        M5.Display.print(author);
+        M5.Display.print(_author);
     }
     y += fontH + 30;
 
     // Paragraphs
-    for (const auto& para : paragraphs) {
+    for (const auto& para : _paragraphs) {
         y = printWrappedAt(para, PAD_X, y, contentW);
         y += 20;  // Paragraph spacing
     }
 }
 
-void CopyScreen::drawScrollIndicator() {
-    if (contentHeight <= visibleHeight) return;
+void CopyScreen::drawEmptyState() {
+    clearContentArea();
 
-    int scrollBarX = SCREEN_WIDTH - SCROLL_BAR_WIDTH;
-    int scrollBarHeight = visibleHeight;
-    int scrollBarY = COPY_HEADER_HEIGHT;
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
 
-    // Background
-    M5.Display.fillRect(scrollBarX, scrollBarY, SCROLL_BAR_WIDTH, scrollBarHeight, 0xDEDB);  // Light gray
+    auto dt = M5.Rtc.getDateTime();
+    int dayOfYear = getDayOfYear(dt.date.month, dt.date.date);
 
-    // Calculate thumb
-    float visibleRatio = (float)visibleHeight / contentHeight;
-    int thumbHeight = max(30, (int)(scrollBarHeight * visibleRatio));
+    int centerY = CONTENT_HEIGHT / 2;
 
-    float scrollRatio = (float)scrollY / (contentHeight - visibleHeight);
-    int thumbY = scrollBarY + (int)((scrollBarHeight - thumbHeight) * scrollRatio);
+    M5.Display.setCursor(PAD_X, centerY - 60);
+    M5.Display.printf("%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
 
-    // Draw thumb
-    M5.Display.fillRect(scrollBarX + 1, thumbY, SCROLL_BAR_WIDTH - 2, thumbHeight, 0x7BEF);  // Gray
+    M5.Display.setCursor(PAD_X, centerY - 20);
+    M5.Display.println("오늘의 필사 내용이 없습니다");
+
+    M5.Display.setTextSize(0.9);
+    M5.Display.setCursor(PAD_X, centerY + 30);
+    M5.Display.println("SD 카드의 /books/365.txt 파일이 필요합니다");
+
+    M5.Display.setCursor(PAD_X, centerY + 70);
+    M5.Display.println("설정 > WiFi 파일 전송으로 업로드하세요");
 }
 
 void CopyScreen::draw() {
-    if (paragraphs.empty()) {
-        // No content message
-        M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-        M5.Display.setFont(&fonts::efontKR_24);
-        M5.Display.setTextSize(1.0);
-        M5.Display.setTextColor(TFT_BLACK);
-
-        auto dt = M5.Rtc.getDateTime();
-        int dayOfYear = getDayOfYear(dt.date.month, dt.date.date);
-
-        int centerY = CONTENT_HEIGHT / 2;
-
-        M5.Display.setCursor(PAD_X, centerY - 60);
-        M5.Display.printf("%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
-
-        M5.Display.setCursor(PAD_X, centerY - 20);
-        M5.Display.println("오늘의 필사 내용이 없습니다");
-
-        M5.Display.setTextSize(0.9);
-        M5.Display.setCursor(PAD_X, centerY + 30);
-        M5.Display.println("SD 카드의 /books/365.txt 파일이 필요합니다");
-
-        M5.Display.setCursor(PAD_X, centerY + 70);
-        M5.Display.println("설정 > WiFi 파일 전송으로 업로드하세요");
+    if (_paragraphs.empty()) {
+        drawEmptyState();
         return;
     }
 
-    drawHeader();
-    drawContent();
-    drawScrollIndicator();
-}
-
-bool CopyScreen::handleTouchStart(int x, int y) {
-    if (paragraphs.empty()) return false;
-    if (contentHeight <= visibleHeight) return false;
-
-    lastTouchY = y;
-    isDragging = true;
-    return false;  // No redraw needed on touch start
-}
-
-bool CopyScreen::handleTouchMove(int x, int y) {
-    if (!isDragging) return false;
-    if (contentHeight <= visibleHeight) return false;
-
-    int delta = lastTouchY - y;  // Drag up = positive delta = scroll down
-    lastTouchY = y;
-
-    // Apply scroll with bounds checking
-    int maxScroll = contentHeight - visibleHeight;
-    scrollY += delta;
-
-    if (scrollY < 0) scrollY = 0;
-    if (scrollY > maxScroll) scrollY = maxScroll;
-
-    return (delta != 0);  // Redraw if scrolled
-}
-
-bool CopyScreen::handleTouchEnd() {
-    if (!isDragging) return false;
-
-    isDragging = false;
-    Serial.printf("CopyScreen: drag end, scroll=%d/%d\n", scrollY, contentHeight - visibleHeight);
-    return true;  // Final redraw
-}
-
-void CopyScreen::resetScroll() {
-    scrollY = 0;
+    // Use ScrollableScreen's template method
+    ScrollableScreen::draw();
 }

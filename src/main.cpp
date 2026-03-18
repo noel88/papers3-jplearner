@@ -289,10 +289,6 @@ void drawTabBar() {
 
         M5.Display.setCursor(labelX, labelY);
         M5.Display.print(TAB_LABELS[i]);
-
-        if (i < TAB_COUNT - 1) {
-            M5.Display.drawLine(tabX + TAB_WIDTH, tabY + 8, tabX + TAB_WIDTH, tabY + TAB_BAR_HEIGHT - 8, 0x7BEF);
-        }
     }
 
     M5.Display.setTextColor(TFT_BLACK);
@@ -318,15 +314,8 @@ void drawTabBar() {
         M5.Display.fillRect(battX + 2, battY + 2, fillWidth, 20, battColor);
     }
 
-    // Battery percentage text
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.setTextColor(battColor);
-    char battText[8];
-    sprintf(battText, "%d%%", batteryPercent);
-    M5.Display.setCursor(battX + 48, battY + 4);
-    M5.Display.print(battText);
+    // Reset font state
     M5.Display.setTextColor(TFT_BLACK);
-
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);
 }
@@ -588,6 +577,13 @@ const int FULL_CLEAR_INTERVAL = 3;  // More frequent full clear to reduce ghosti
 void refreshDisplay() {
     if (needsFullRedraw || ScreenManager::instance().needsRedraw()) {
         refreshCount++;
+
+        // Force full clear on first refresh to remove old ghosting
+        static bool firstRefresh = true;
+        if (firstRefresh) {
+            refreshCount = FULL_CLEAR_INTERVAL;
+            firstRefresh = false;
+        }
 
         // Always use quality mode for main content
         M5.Display.setEpdMode(epd_mode_t::epd_quality);

@@ -1,9 +1,8 @@
 #include <Arduino.h>
-#include <M5GFX.h>
+#include <M5Unified.h>
 #include <SD.h>
 #include <SPI.h>
 #include <LittleFS.h>
-#include <I2C_BM8563.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
@@ -11,9 +10,10 @@
 // ============================================
 // Hardware Configuration
 // ============================================
-static M5GFX display;
-I2C_BM8563 rtc(I2C_BM8563_DEFAULT_ADDRESS, Wire);
 AsyncWebServer server(80);
+
+// Use M5.Display for all display operations
+#define display M5.Display
 
 // M5Paper S3 SD Card pins (correct pinout)
 #define SD_CS   47
@@ -985,15 +985,12 @@ void stopWiFiMode() {
 // Content Loading (Temporary - will be replaced with epub)
 // ============================================
 bool loadTodaySentences() {
-    Wire.begin(41, 42);
-    rtc.begin();
-
-    I2C_BM8563_DateTypeDef date;
-    rtc.getDate(&date);
+    // Get date from M5Unified RTC
+    auto dt = M5.Rtc.getDateTime();
 
     char target[8];
-    sprintf(target, "#%02d%02d", date.month, date.date);
-    todayDate = String(date.month) + "月" + String(date.date) + "日";
+    sprintf(target, "#%02d%02d", dt.date.month, dt.date.date);
+    todayDate = String(dt.date.month) + "月" + String(dt.date.date) + "日";
 
     // Try SD card first, then LittleFS as fallback
     File f;
@@ -1440,33 +1437,20 @@ void refreshDisplay() {
 // Setup & Loop
 // ============================================
 void setup() {
-    Serial.begin(115200);
+    // Initialize M5Unified (handles display, touch, RTC, etc.)
+    auto cfg = M5.config();
+    cfg.clear_display = true;  // Clear display on start
+    M5.begin(cfg);
+
     Serial.println("Papers3 JP Learner Starting...");
 
-    // Initialize display
-    Serial.println("Initializing display...");
-    display.begin();
-    Serial.println("Display begin OK, waiting...");
-    display.waitDisplay();
-    Serial.println("Display ready, configuring...");
+    // Configure display
+    Serial.println("Configuring display...");
     display.setRotation(1);  // Landscape mode
-
-    // E-ink full clear cycle (black -> white -> black -> white)
-    // This removes ghosting and vertical lines
-    Serial.println("Clearing e-ink display...");
     display.setEpdMode(epd_mode_t::epd_quality);
 
-    // Fill black and refresh
-    display.fillScreen(TFT_BLACK);
-    display.display();
-    display.waitDisplay();
-
-    // Fill white and refresh
-    display.fillScreen(TFT_WHITE);
-    display.display();
-    display.waitDisplay();
-
-    // One more cycle for stubborn artifacts
+    // E-ink full clear cycle (removes ghosting and vertical lines)
+    Serial.println("Clearing e-ink display...");
     display.fillScreen(TFT_BLACK);
     display.display();
     display.waitDisplay();
@@ -1655,6 +1639,8 @@ void handleContentTouch(int touchX, int touchY) {
 }
 
 void loop() {
+    M5.update();  // Update M5Unified state (touch, buttons, etc.)
+
     if (!sdCardMounted) {
         delay(1000);
         return;
@@ -1663,40 +1649,40 @@ void loop() {
     // Update battery periodically
     updateBattery();
 
-    lgfx::touch_point_t tp;
+    // Get touch state
+    auto touch = M5.Touch.getDetail();
 
     // WiFi mode handling
     if (wifiMode) {
-        if (display.getTouch(&tp, 1)) {
+        if (touch.wasPressed()) {
             delay(300);
             stopWiFiMode();
 
             // Reload content and return to tab view
             loadTodaySentences();
             needsFullRedraw = true;
-            while (display.getTouch(&tp, 1)) delay(10);
         }
         delay(50);
         return;
     }
 
     // Normal mode - tab-based navigation
-    if (display.getTouch(&tp, 1)) {
+    if (touch.wasPressed()) {
         delay(200);  // Debounce
 
+        int touchX = touch.x;
+        int touchY = touch.y;
+
         // Check if touch is in tab bar
-        int tabTouched = handleTabTouch(tp.x, tp.y);
+        int tabTouched = handleTabTouch(touchX, touchY);
 
         if (tabTouched >= 0) {
             // Tab was touched
             switchTab((TabIndex)tabTouched);
         } else {
             // Content area was touched
-            handleContentTouch(tp.x, tp.y);
+            handleContentTouch(touchX, touchY);
         }
-
-        // Wait for touch release
-        while (display.getTouch(&tp, 1)) delay(10);
     }
 
     // Refresh display if needed

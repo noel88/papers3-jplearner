@@ -287,26 +287,38 @@ void CopyScreen::draw() {
     drawScrollIndicator();
 }
 
-bool CopyScreen::handleTouch(int x, int y) {
+bool CopyScreen::handleTouchStart(int x, int y) {
     if (paragraphs.empty()) return false;
-    if (contentHeight <= visibleHeight) return false;  // No scroll needed
+    if (contentHeight <= visibleHeight) return false;
 
-    // Simple scroll: touch top half = scroll up, bottom half = scroll down
-    int scrollAmount = visibleHeight / 3;  // Scroll 1/3 of visible area
+    lastTouchY = y;
+    isDragging = true;
+    return false;  // No redraw needed on touch start
+}
 
-    if (y < CONTENT_HEIGHT / 2) {
-        // Scroll up (show earlier content)
-        scrollY -= scrollAmount;
-        if (scrollY < 0) scrollY = 0;
-    } else {
-        // Scroll down (show later content)
-        scrollY += scrollAmount;
-        int maxScroll = contentHeight - visibleHeight;
-        if (scrollY > maxScroll) scrollY = maxScroll;
-    }
+bool CopyScreen::handleTouchMove(int x, int y) {
+    if (!isDragging) return false;
+    if (contentHeight <= visibleHeight) return false;
 
-    Serial.printf("CopyScreen: scroll=%d/%d\n", scrollY, contentHeight - visibleHeight);
-    return true;
+    int delta = lastTouchY - y;  // Drag up = positive delta = scroll down
+    lastTouchY = y;
+
+    // Apply scroll with bounds checking
+    int maxScroll = contentHeight - visibleHeight;
+    scrollY += delta;
+
+    if (scrollY < 0) scrollY = 0;
+    if (scrollY > maxScroll) scrollY = maxScroll;
+
+    return (delta != 0);  // Redraw if scrolled
+}
+
+bool CopyScreen::handleTouchEnd() {
+    if (!isDragging) return false;
+
+    isDragging = false;
+    Serial.printf("CopyScreen: drag end, scroll=%d/%d\n", scrollY, contentHeight - visibleHeight);
+    return true;  // Final redraw
 }
 
 void CopyScreen::resetScroll() {

@@ -1374,12 +1374,7 @@ void setup() {
     Serial.println("Setup complete!");
 }
 
-void handleCopyTabTouch(int touchX, int touchY) {
-    // Delegate to CopyScreen class (scroll-based navigation)
-    if (copyScreen.handleTouch(touchX, touchY)) {
-        needsFullRedraw = true;
-    }
-}
+// Copy screen drag state is handled in loop()
 
 void handleSettingsTabTouch(int touchX, int touchY) {
     switch (settingsState) {
@@ -1456,7 +1451,7 @@ void handleSettingsTabTouch(int touchX, int touchY) {
 void handleContentTouch(int touchX, int touchY) {
     switch (currentTab) {
         case TAB_COPY:
-            handleCopyTabTouch(touchX, touchY);
+            // Drag scroll handled separately in loop()
             break;
         case TAB_SETTINGS:
             handleSettingsTabTouch(touchX, touchY);
@@ -1495,27 +1490,57 @@ void loop() {
         return;
     }
 
-    // Normal mode - tab-based navigation
-    if (touch.wasPressed()) {
-        delay(200);  // Debounce
+    // Handle drag scroll for copy screen
+    if (currentTab == TAB_COPY) {
+        if (touch.wasPressed()) {
+            int touchY = touch.y;
+            int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
 
-        int touchX = touch.x;
-        int touchY = touch.y;
+            if (touchY < tabY) {
+                // Content area - start drag
+                copyScreen.handleTouchStart(touch.x, touch.y);
+            } else {
+                // Tab bar
+                int tabTouched = handleTabTouch(touch.x, touch.y);
+                if (tabTouched >= 0) {
+                    switchTab((TabIndex)tabTouched);
+                }
+            }
+        } else if (touch.isPressed()) {
+            // Dragging
+            if (copyScreen.handleTouchMove(touch.x, touch.y)) {
+                needsFullRedraw = true;
+                refreshDisplay();
+            }
+        } else if (touch.wasReleased()) {
+            // End drag
+            if (copyScreen.handleTouchEnd()) {
+                needsFullRedraw = true;
+            }
+        }
+    } else {
+        // Other tabs - simple touch handling
+        if (touch.wasPressed()) {
+            delay(200);  // Debounce
 
-        // Check if touch is in tab bar
-        int tabTouched = handleTabTouch(touchX, touchY);
+            int touchX = touch.x;
+            int touchY = touch.y;
 
-        if (tabTouched >= 0) {
-            // Tab was touched
-            switchTab((TabIndex)tabTouched);
-        } else {
-            // Content area was touched
-            handleContentTouch(touchX, touchY);
+            // Check if touch is in tab bar
+            int tabTouched = handleTabTouch(touchX, touchY);
+
+            if (tabTouched >= 0) {
+                // Tab was touched
+                switchTab((TabIndex)tabTouched);
+            } else {
+                // Content area was touched
+                handleContentTouch(touchX, touchY);
+            }
         }
     }
 
     // Refresh display if needed
     refreshDisplay();
 
-    delay(50);
+    delay(10);  // Faster response for drag
 }

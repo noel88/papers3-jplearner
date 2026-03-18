@@ -14,7 +14,9 @@ public:
     void draw();
 
     // Touch handling (returns true if screen needs redraw)
-    bool handleTouch(int x, int y);
+    bool handleTouchStart(int x, int y);
+    bool handleTouchMove(int x, int y);
+    bool handleTouchEnd();
 
     // Reset scroll position
     void resetScroll();

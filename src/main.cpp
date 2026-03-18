@@ -218,6 +218,28 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
             font-size: 12px;
             width: auto;
         }
+        .btn-folder {
+            background: #ffc107;
+            color: #000;
+            padding: 5px 10px;
+            font-size: 12px;
+            width: auto;
+        }
+        .folder-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        .folder-row input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .folder-row button {
+            width: auto;
+            padding: 8px 16px;
+        }
         .info { background: #e7f3ff; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
         .info p { margin: 5px 0; }
     </style>
@@ -254,6 +276,10 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
             <option value="/fonts">fonts</option>
             <option value="/userdata">userdata</option>
         </select>
+        <div class="folder-row">
+            <input type="text" id="newFolderName" placeholder="New folder name">
+            <button class="btn-folder" onclick="createFolder()">Create Folder</button>
+        </div>
         <div class="file-list" id="fileList">
             <div class="file-item">Loading...</div>
         </div>
@@ -292,22 +318,30 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
             }
         }
 
+        let currentDir = '/books';
+
         async function loadFiles() {
-            const dir = document.getElementById('browseDir').value;
+            currentDir = document.getElementById('browseDir').value;
             const list = document.getElementById('fileList');
             try {
-                const res = await fetch('/api/files?dir=' + encodeURIComponent(dir));
+                const res = await fetch('/api/files?dir=' + encodeURIComponent(currentDir));
                 const files = await res.json();
                 if (files.length === 0) {
                     list.innerHTML = '<div class="file-item">No files</div>';
                 } else {
+                    // Sort: folders first, then files
+                    files.sort((a, b) => {
+                        if (a.isDir && !b.isDir) return -1;
+                        if (!a.isDir && b.isDir) return 1;
+                        return a.name.localeCompare(b.name);
+                    });
                     list.innerHTML = files.map(f => `
                         <div class="file-item">
                             <div>
-                                <span class="file-name">${f.name}</span><br>
-                                <span class="file-size">${formatSize(f.size)}</span>
+                                <span class="file-name">${f.isDir ? '📁 ' : '📄 '}${f.name}</span><br>
+                                <span class="file-size">${f.isDir ? 'Folder' : formatSize(f.size)}</span>
                             </div>
-                            <button class="btn-delete" onclick="deleteFile('${dir}/${f.name}')">Delete</button>
+                            <button class="btn-delete" onclick="deleteItem('${currentDir}/${f.name}', ${f.isDir})">Delete</button>
                         </div>
                     `).join('');
                 }
@@ -379,14 +413,43 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
             loadInfo();
         }
 
-        async function deleteFile(path) {
-            if (!confirm('Delete ' + path + '?')) return;
+        async function deleteItem(path, isDir) {
+            const type = isDir ? 'folder' : 'file';
+            if (!confirm('Delete ' + type + ': ' + path + '?')) return;
             try {
-                await fetch('/api/delete?path=' + encodeURIComponent(path), {method: 'DELETE'});
+                const endpoint = isDir ? '/api/rmdir' : '/api/delete';
+                await fetch(endpoint + '?path=' + encodeURIComponent(path), {method: 'DELETE'});
                 loadFiles();
                 loadInfo();
             } catch(e) {
-                alert('Error deleting file');
+                alert('Error deleting ' + type);
+            }
+        }
+
+        async function createFolder() {
+            const dir = document.getElementById('browseDir').value;
+            const name = document.getElementById('newFolderName').value.trim();
+
+            if (!name) {
+                alert('Please enter folder name');
+                return;
+            }
+
+            if (name.includes('/') || name.includes('\\')) {
+                alert('Invalid folder name');
+                return;
+            }
+
+            try {
+                const res = await fetch('/api/mkdir?path=' + encodeURIComponent(dir + '/' + name), {method: 'POST'});
+                if (res.ok) {
+                    document.getElementById('newFolderName').value = '';
+                    loadFiles();
+                } else {
+                    alert('Failed to create folder');
+                }
+            } catch(e) {
+                alert('Error creating folder');
             }
         }
 
@@ -789,11 +852,13 @@ void setupWebServer() {
             File file = root.openNextFile();
             bool first = true;
             while (file) {
-                if (!file.isDirectory()) {
-                    if (!first) json += ",";
-                    json += "{\"name\":\"" + String(file.name()) + "\",\"size\":" + String(file.size()) + "}";
-                    first = false;
+                if (!first) json += ",";
+                if (file.isDirectory()) {
+                    json += "{\"name\":\"" + String(file.name()) + "\",\"size\":-1,\"isDir\":true}";
+                } else {
+                    json += "{\"name\":\"" + String(file.name()) + "\",\"size\":" + String(file.size()) + ",\"isDir\":false}";
                 }
+                first = false;
                 file = root.openNextFile();
             }
         }
@@ -809,6 +874,41 @@ void setupWebServer() {
                 request->send(200, "text/plain", "OK");
             } else {
                 request->send(500, "text/plain", "Failed");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing path");
+        }
+    });
+
+    // API: Create folder
+    server.on("/api/mkdir", HTTP_POST, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("path")) {
+            String path = request->getParam("path")->value();
+            if (SD.mkdir(path)) {
+                request->send(200, "text/plain", "OK");
+                Serial.printf("Created folder: %s\n", path.c_str());
+            } else {
+                // Check if already exists
+                if (SD.exists(path)) {
+                    request->send(200, "text/plain", "Already exists");
+                } else {
+                    request->send(500, "text/plain", "Failed");
+                }
+            }
+        } else {
+            request->send(400, "text/plain", "Missing path");
+        }
+    });
+
+    // API: Delete folder
+    server.on("/api/rmdir", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("path")) {
+            String path = request->getParam("path")->value();
+            if (SD.rmdir(path)) {
+                request->send(200, "text/plain", "OK");
+                Serial.printf("Deleted folder: %s\n", path.c_str());
+            } else {
+                request->send(500, "text/plain", "Failed (folder not empty?)");
             }
         } else {
             request->send(400, "text/plain", "Missing path");

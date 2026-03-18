@@ -15,11 +15,11 @@ static M5GFX display;
 I2C_BM8563 rtc(I2C_BM8563_DEFAULT_ADDRESS, Wire);
 AsyncWebServer server(80);
 
-// M5Paper S3 SD Card pins
-#define SD_CS   4
-#define SD_SCK  36
-#define SD_MISO 35
-#define SD_MOSI 37
+// M5Paper S3 SD Card pins (correct pinout)
+#define SD_CS   47
+#define SD_SCK  39
+#define SD_MISO 40
+#define SD_MOSI 38
 
 // ============================================
 // Constants

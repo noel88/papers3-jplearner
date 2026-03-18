@@ -4,12 +4,15 @@
 #include <SPI.h>
 #include <LittleFS.h>
 #include <I2C_BM8563.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
 
 // ============================================
 // Hardware Configuration
 // ============================================
 static M5GFX display;
 I2C_BM8563 rtc(I2C_BM8563_DEFAULT_ADDRESS, Wire);
+AsyncWebServer server(80);
 
 // M5Paper S3 SD Card pins
 #define SD_CS   4
@@ -35,15 +38,284 @@ const char* DIR_DICT = "/dict";
 const char* DIR_FONTS = "/fonts";
 const char* DIR_USERDATA = "/userdata";
 
+// WiFi AP Settings
+const char* AP_SSID = "Papers3-JP";
+const char* AP_PASS = "12345678";
+
 // ============================================
 // State
 // ============================================
 bool sdCardMounted = false;
+bool wifiMode = false;
 std::vector<String> sentences;
 String todayTitle = "";
 String todayAuthor = "";
 String todayDate = "";
 int currentPage = -1;
+String currentUploadPath = "";
+File uploadFile;
+
+// ============================================
+// HTML Page
+// ============================================
+const char HTML_PAGE[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Papers3 JP Learner - File Manager</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        h1 { color: #333; text-align: center; }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card h2 { margin-top: 0; color: #555; }
+        select, input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        button:hover { background: #45a049; }
+        button:disabled { background: #ccc; cursor: not-allowed; }
+        .progress {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+            display: none;
+        }
+        .progress-bar {
+            height: 100%;
+            background: #4CAF50;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .file-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .file-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .file-item:last-child { border-bottom: none; }
+        .file-name { font-weight: 500; }
+        .file-size { color: #888; font-size: 14px; }
+        .btn-delete {
+            background: #dc3545;
+            padding: 5px 10px;
+            font-size: 12px;
+            width: auto;
+        }
+        .info { background: #e7f3ff; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+        .info p { margin: 5px 0; }
+    </style>
+</head>
+<body>
+    <h1>Papers3 JP Learner</h1>
+
+    <div class="info">
+        <p><strong>SD Card:</strong> <span id="sdInfo">Loading...</span></p>
+        <p><strong>Free Space:</strong> <span id="freeSpace">Loading...</span></p>
+    </div>
+
+    <div class="card">
+        <h2>Upload File</h2>
+        <select id="targetDir">
+            <option value="/books">books (epub, txt)</option>
+            <option value="/dict">dict (dictionary)</option>
+            <option value="/fonts">fonts</option>
+            <option value="/userdata">userdata</option>
+        </select>
+        <input type="file" id="fileInput" multiple>
+        <div class="progress" id="progress">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div id="status"></div>
+        <button onclick="uploadFiles()" id="uploadBtn">Upload</button>
+    </div>
+
+    <div class="card">
+        <h2>Files</h2>
+        <select id="browseDir" onchange="loadFiles()">
+            <option value="/books">books</option>
+            <option value="/dict">dict</option>
+            <option value="/fonts">fonts</option>
+            <option value="/userdata">userdata</option>
+        </select>
+        <div class="file-list" id="fileList">
+            <div class="file-item">Loading...</div>
+        </div>
+    </div>
+
+    <div class="card" style="text-align: center;">
+        <button onclick="exitWifi()" style="background: #6c757d;">Exit WiFi Mode</button>
+    </div>
+
+    <script>
+        async function loadInfo() {
+            try {
+                const res = await fetch('/api/info');
+                const data = await res.json();
+                document.getElementById('sdInfo').textContent = data.cardSize + ' MB';
+                document.getElementById('freeSpace').textContent = data.freeSpace + ' MB';
+            } catch(e) {
+                document.getElementById('sdInfo').textContent = 'Error';
+            }
+        }
+
+        async function loadFiles() {
+            const dir = document.getElementById('browseDir').value;
+            const list = document.getElementById('fileList');
+            try {
+                const res = await fetch('/api/files?dir=' + encodeURIComponent(dir));
+                const files = await res.json();
+                if (files.length === 0) {
+                    list.innerHTML = '<div class="file-item">No files</div>';
+                } else {
+                    list.innerHTML = files.map(f => `
+                        <div class="file-item">
+                            <div>
+                                <span class="file-name">${f.name}</span><br>
+                                <span class="file-size">${formatSize(f.size)}</span>
+                            </div>
+                            <button class="btn-delete" onclick="deleteFile('${dir}/${f.name}')">Delete</button>
+                        </div>
+                    `).join('');
+                }
+            } catch(e) {
+                list.innerHTML = '<div class="file-item">Error loading files</div>';
+            }
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+            return (bytes/1024/1024).toFixed(1) + ' MB';
+        }
+
+        async function uploadFiles() {
+            const input = document.getElementById('fileInput');
+            const dir = document.getElementById('targetDir').value;
+            const btn = document.getElementById('uploadBtn');
+            const progress = document.getElementById('progress');
+            const progressBar = document.getElementById('progressBar');
+            const status = document.getElementById('status');
+
+            if (!input.files.length) {
+                status.innerHTML = '<div class="status error">Please select files</div>';
+                return;
+            }
+
+            btn.disabled = true;
+            progress.style.display = 'block';
+            status.innerHTML = '';
+
+            for (let i = 0; i < input.files.length; i++) {
+                const file = input.files[i];
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('dir', dir);
+
+                try {
+                    const xhr = new XMLHttpRequest();
+                    xhr.open('POST', '/api/upload', true);
+
+                    xhr.upload.onprogress = (e) => {
+                        if (e.lengthComputable) {
+                            const pct = (e.loaded / e.total) * 100;
+                            progressBar.style.width = pct + '%';
+                        }
+                    };
+
+                    await new Promise((resolve, reject) => {
+                        xhr.onload = () => {
+                            if (xhr.status === 200) resolve();
+                            else reject(new Error(xhr.statusText));
+                        };
+                        xhr.onerror = () => reject(new Error('Network error'));
+                        xhr.send(formData);
+                    });
+
+                    status.innerHTML = `<div class="status success">${file.name} uploaded!</div>`;
+                } catch(e) {
+                    status.innerHTML = `<div class="status error">Error: ${e.message}</div>`;
+                }
+            }
+
+            btn.disabled = false;
+            progress.style.display = 'none';
+            progressBar.style.width = '0%';
+            input.value = '';
+            loadFiles();
+            loadInfo();
+        }
+
+        async function deleteFile(path) {
+            if (!confirm('Delete ' + path + '?')) return;
+            try {
+                await fetch('/api/delete?path=' + encodeURIComponent(path), {method: 'DELETE'});
+                loadFiles();
+                loadInfo();
+            } catch(e) {
+                alert('Error deleting file');
+            }
+        }
+
+        async function exitWifi() {
+            if (!confirm('Exit WiFi mode and restart?')) return;
+            try {
+                await fetch('/api/exit');
+            } catch(e) {}
+            document.body.innerHTML = '<h1 style="text-align:center;margin-top:100px;">Restarting...</h1>';
+        }
+
+        loadInfo();
+        loadFiles();
+    </script>
+</body>
+</html>
+)rawliteral";
 
 // ============================================
 // SD Card Functions
@@ -113,6 +385,162 @@ void showSDCardError(const char* message) {
 
 uint64_t getSDCardFreeSpace() {
     return SD.totalBytes() - SD.usedBytes();
+}
+
+// ============================================
+// WiFi & Web Server Functions
+// ============================================
+void setupWebServer() {
+    // Serve main page
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send_P(200, "text/html", HTML_PAGE);
+    });
+
+    // API: Get SD card info
+    server.on("/api/info", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String json = "{\"cardSize\":" + String(SD.cardSize() / (1024 * 1024)) +
+                      ",\"freeSpace\":" + String(getSDCardFreeSpace() / (1024 * 1024)) + "}";
+        request->send(200, "application/json", json);
+    });
+
+    // API: List files in directory
+    server.on("/api/files", HTTP_GET, [](AsyncWebServerRequest *request) {
+        String dir = "/books";
+        if (request->hasParam("dir")) {
+            dir = request->getParam("dir")->value();
+        }
+
+        String json = "[";
+        File root = SD.open(dir);
+        if (root && root.isDirectory()) {
+            File file = root.openNextFile();
+            bool first = true;
+            while (file) {
+                if (!file.isDirectory()) {
+                    if (!first) json += ",";
+                    json += "{\"name\":\"" + String(file.name()) + "\",\"size\":" + String(file.size()) + "}";
+                    first = false;
+                }
+                file = root.openNextFile();
+            }
+        }
+        json += "]";
+        request->send(200, "application/json", json);
+    });
+
+    // API: Delete file
+    server.on("/api/delete", HTTP_DELETE, [](AsyncWebServerRequest *request) {
+        if (request->hasParam("path")) {
+            String path = request->getParam("path")->value();
+            if (SD.remove(path)) {
+                request->send(200, "text/plain", "OK");
+            } else {
+                request->send(500, "text/plain", "Failed");
+            }
+        } else {
+            request->send(400, "text/plain", "Missing path");
+        }
+    });
+
+    // API: Upload file
+    server.on("/api/upload", HTTP_POST,
+        [](AsyncWebServerRequest *request) {
+            request->send(200, "text/plain", "OK");
+        },
+        [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
+            if (index == 0) {
+                String dir = "/books";
+                if (request->hasParam("dir", true)) {
+                    dir = request->getParam("dir", true)->value();
+                }
+                currentUploadPath = dir + "/" + filename;
+                Serial.printf("Upload Start: %s\n", currentUploadPath.c_str());
+                uploadFile = SD.open(currentUploadPath, FILE_WRITE);
+            }
+
+            if (uploadFile && len) {
+                uploadFile.write(data, len);
+            }
+
+            if (final) {
+                if (uploadFile) {
+                    uploadFile.close();
+                    Serial.printf("Upload Complete: %s (%u bytes)\n", currentUploadPath.c_str(), index + len);
+                }
+            }
+        }
+    );
+
+    // API: Exit WiFi mode
+    server.on("/api/exit", HTTP_GET, [](AsyncWebServerRequest *request) {
+        request->send(200, "text/plain", "Restarting...");
+        delay(1000);
+        ESP.restart();
+    });
+
+    server.begin();
+    Serial.println("Web server started");
+}
+
+void startWiFiMode() {
+    wifiMode = true;
+
+    // Start AP mode
+    WiFi.mode(WIFI_AP);
+    WiFi.softAP(AP_SSID, AP_PASS);
+
+    IPAddress IP = WiFi.softAPIP();
+    Serial.print("AP IP address: ");
+    Serial.println(IP);
+
+    setupWebServer();
+
+    // Display WiFi info
+    display.fillScreen(TFT_WHITE);
+    display.setTextColor(TFT_BLACK);
+    display.setTextSize(1.5);
+
+    int y = PAD_Y;
+    display.setCursor(PAD_X, y);
+    display.println("WiFi File Transfer Mode");
+    y += 60;
+
+    display.setTextSize(1.2);
+    display.setCursor(PAD_X, y);
+    display.println("1. Connect to WiFi:");
+    y += 40;
+
+    display.setTextSize(1.4);
+    display.setCursor(PAD_X + 40, y);
+    display.printf("SSID: %s", AP_SSID);
+    y += 35;
+    display.setCursor(PAD_X + 40, y);
+    display.printf("Pass: %s", AP_PASS);
+    y += 50;
+
+    display.setTextSize(1.2);
+    display.setCursor(PAD_X, y);
+    display.println("2. Open browser:");
+    y += 40;
+
+    display.setTextSize(1.4);
+    display.setCursor(PAD_X + 40, y);
+    display.printf("http://%s", IP.toString().c_str());
+    y += 60;
+
+    display.setTextSize(1.0);
+    display.setCursor(PAD_X, y);
+    display.println("Touch screen to exit WiFi mode");
+
+    display.display();
+}
+
+void stopWiFiMode() {
+    wifiMode = false;
+    server.end();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_OFF);
+    Serial.println("WiFi mode stopped");
 }
 
 // ============================================
@@ -246,6 +674,25 @@ void showPage(int idx) {
     display.display();
 }
 
+void showMainMenu() {
+    display.fillScreen(TFT_WHITE);
+    display.setTextColor(TFT_BLACK);
+    display.setTextSize(1.2);
+
+    int centerY = CONTENT_HEIGHT / 2;
+
+    display.setCursor(PAD_X, centerY - 60);
+    display.println("No data for today");
+
+    display.setCursor(PAD_X, centerY - 20);
+    display.println("Touch LEFT side: Start WiFi File Transfer");
+
+    display.setCursor(PAD_X, centerY + 20);
+    display.println("Touch RIGHT side: Retry load content");
+
+    display.display();
+}
+
 // ============================================
 // Setup & Loop
 // ============================================
@@ -287,12 +734,7 @@ void setup() {
     if (loadTodaySentences()) {
         showTitlePage();
     } else {
-        display.fillScreen(TFT_WHITE);
-        display.setCursor(PAD_X, PAD_Y);
-        display.println("No data for today");
-        display.setCursor(PAD_X, PAD_Y + 40);
-        display.println("Place 365.txt in /books/ on SD card");
-        display.display();
+        showMainMenu();
     }
 }
 
@@ -303,18 +745,53 @@ void loop() {
     }
 
     lgfx::touch_point_t tp;
-    if (display.getTouch(&tp, 1)) {
-        delay(300);
-        if (currentPage == -1) {
-            currentPage = 0;
-            showPage(currentPage);
-        } else {
-            currentPage++;
-            if (currentPage >= (int)sentences.size()) {
-                currentPage = -1;
+
+    // WiFi mode handling
+    if (wifiMode) {
+        if (display.getTouch(&tp, 1)) {
+            delay(300);
+            stopWiFiMode();
+
+            // Reload content
+            if (loadTodaySentences()) {
                 showTitlePage();
             } else {
+                showMainMenu();
+            }
+            while (display.getTouch(&tp, 1)) delay(10);
+        }
+        delay(50);
+        return;
+    }
+
+    // Normal mode handling
+    if (display.getTouch(&tp, 1)) {
+        delay(300);
+
+        // Check if we're on main menu (no content loaded)
+        if (sentences.size() == 0) {
+            if (tp.x < SCREEN_WIDTH / 2) {
+                // Left side - start WiFi mode
+                startWiFiMode();
+            } else {
+                // Right side - retry loading
+                if (loadTodaySentences()) {
+                    showTitlePage();
+                }
+            }
+        } else {
+            // Normal page navigation
+            if (currentPage == -1) {
+                currentPage = 0;
                 showPage(currentPage);
+            } else {
+                currentPage++;
+                if (currentPage >= (int)sentences.size()) {
+                    currentPage = -1;
+                    showTitlePage();
+                } else {
+                    showPage(currentPage);
+                }
             }
         }
         while (display.getTouch(&tp, 1)) delay(10);

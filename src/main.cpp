@@ -1309,10 +1309,32 @@ void setup() {
 
     // Initialize LittleFS (for config and default font)
     Serial.println("Initializing LittleFS...");
-    if (!LittleFS.begin(true)) {  // true = format on fail
-        Serial.println("LittleFS mount failed");
+    if (!LittleFS.begin(false)) {
+        Serial.println("LittleFS mount failed, formatting...");
+        if (!LittleFS.format()) {
+            Serial.println("LittleFS format failed!");
+        } else {
+            Serial.println("LittleFS formatted OK");
+            if (!LittleFS.begin(false)) {
+                Serial.println("LittleFS mount after format failed!");
+            } else {
+                Serial.println("LittleFS mounted after format");
+            }
+        }
     } else {
         Serial.println("LittleFS mounted OK");
+    }
+
+    // Test LittleFS write capability
+    Serial.println("Testing LittleFS write...");
+    File testFile = LittleFS.open("/test.txt", "w");
+    if (testFile) {
+        testFile.println("test");
+        testFile.close();
+        LittleFS.remove("/test.txt");
+        Serial.println("LittleFS write test OK");
+    } else {
+        Serial.println("LittleFS write test FAILED!");
     }
 
     // Load configuration

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "BaseScreen.h"
+#include <vector>
 
 // Forward declaration for Config access
 struct Config;
@@ -15,6 +16,7 @@ enum class SettingsState {
     WiFiAP,
     WiFiSTA,
     Display,
+    DailyEpub,  // EPUB file selection for Copy screen
     Learning,
     System
 };
@@ -63,6 +65,10 @@ private:
     SettingsState _state;
     WiFiModeCallback _wifiModeCallback;
 
+    // EPUB selection
+    std::vector<String> _epubFiles;
+    int _epubScrollOffset;
+
     // ============================================
     // Drawing Methods for Each State
     // ============================================
@@ -71,6 +77,7 @@ private:
     void drawWiFiAPSettings();
     void drawWiFiSTASettings();
     void drawDisplaySettings();
+    void drawDailyEpubSettings();
     void drawLearningSettings();
     void drawSystemSettings();
 
@@ -81,7 +88,14 @@ private:
     bool handleMainMenuTouch(int x, int y);
     bool handleWiFiAPTouch(int x, int y);
     bool handleWiFiSTATouch(int x, int y);
+    bool handleDailyEpubTouch(int x, int y);
     bool handleBackButton(int y);
+
+    // ============================================
+    // Helper Methods
+    // ============================================
+
+    void scanEpubFiles();
 
     // ============================================
     // Constants

@@ -6,7 +6,7 @@ ScreenManager& ScreenManager::instance() {
 }
 
 ScreenManager::ScreenManager()
-    : _currentTab(TAB_COPY) {
+    : _currentTab(static_cast<TabIndex>(-1)) {  // Invalid initial value
     // Initialize all screen pointers to nullptr
     for (int i = 0; i < TAB_COUNT; i++) {
         _screens[i] = nullptr;

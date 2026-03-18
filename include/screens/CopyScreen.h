@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ScrollableScreen.h"
+#include "BaseScreen.h"
 #include "Config.h"
 #include "EpubParser.h"
 #include <vector>
@@ -9,16 +9,14 @@
  * 필사 (Copy/Transcription) Screen
  *
  * Displays daily content from EPUB or 365.txt file.
- * Extends ScrollableScreen for drag scroll functionality.
+ * Uses page-based navigation instead of scroll for e-ink optimization.
  *
  * Content Source Priority:
- * 1. EPUB file matching "365*.epub" in /books/
- * 2. Plain text 365.txt file
- *
- * Design Pattern: Template Method (inherited from ScrollableScreen)
- * - Implements drawHeader(), drawContent(), calculateContentHeight()
+ * 1. EPUB file matching config.dailyEpub in /books/
+ * 2. Auto-detect EPUB with "365" in name
+ * 3. Plain text 365.txt file
  */
-class CopyScreen : public ScrollableScreen {
+class CopyScreen : public BaseScreen {
 public:
     CopyScreen();
 
@@ -29,11 +27,8 @@ public:
     const char* getName() const override { return "Copy"; }
 
     void onEnter() override;
-
-    /**
-     * Override draw to handle empty content case
-     */
     void draw() override;
+    bool handleTouchStart(int x, int y) override;
 
     // ============================================
     // Content Loading
@@ -45,17 +40,6 @@ public:
      */
     bool loadTodayContent();
 
-protected:
-    // ============================================
-    // ScrollableScreen Template Method Implementation
-    // ============================================
-
-    void drawHeader() override;
-    void drawContent() override;
-    int calculateContentHeight() override;
-
-    int getHeaderHeight() const override { return 50; }
-
 private:
     // Content data
     String _date;
@@ -63,14 +47,24 @@ private:
     String _author;
     std::vector<String> _paragraphs;
 
+    // Page navigation
+    int _currentPage;
+    int _totalPages;
+    std::vector<int> _pageBreaks;  // Index into _paragraphs for each page start
+
     // EPUB support
     EpubParser _epubParser;
     String _epubPath;
 
+    // Drawing methods
+    void drawHeader();
+    void drawPageContent();
+    void drawNavigation();
+    void drawEmptyState();
+
     // Helper functions
     int getDayOfYear(int month, int day);
-    int printWrappedAt(const String& text, int x, int y, int maxWidth);
-    void drawEmptyState();
+    void calculatePages();
 
     // Content loading helpers
     bool loadFromEpub(int dayOfYear);

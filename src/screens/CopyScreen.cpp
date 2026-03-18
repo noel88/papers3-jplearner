@@ -1,20 +1,24 @@
 #include "screens/CopyScreen.h"
+#include "Config.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
 
-// Line spacing constant
-constexpr int LINE_SPACING = 16;
-
-// EPUB file pattern for 365-day books
-static const char* EPUB_365_PATTERN = "365";
+// Layout constants
+constexpr int LINE_SPACING = 8;
+constexpr int PARAGRAPH_SPACING = 24;
+constexpr int NAV_HEIGHT = 50;
+constexpr int HEADER_HEIGHT = 50;
+constexpr int TAB_BAR_HEIGHT = 60;  // Tab bar at bottom of screen
 
 CopyScreen::CopyScreen()
-    : ScrollableScreen() {
+    : BaseScreen(),
+      _currentPage(0),
+      _totalPages(0) {
 }
 
 void CopyScreen::onEnter() {
-    ScrollableScreen::onEnter();
+    BaseScreen::onEnter();
     // Reload content when entering screen
     loadTodayContent();
 }
@@ -37,6 +41,9 @@ bool CopyScreen::loadTodayContent() {
     _paragraphs.clear();
     _title = "";
     _author = "";
+    _currentPage = 0;
+    _totalPages = 0;
+    _pageBreaks.clear();
 
     Serial.printf("CopyScreen: Loading day %d\n", dayOfYear);
 
@@ -47,12 +54,9 @@ bool CopyScreen::loadTodayContent() {
     }
 
     if (loaded) {
-        // Reset scroll on new content
-        resetScroll();
-        _contentHeight = calculateContentHeight();
-
-        Serial.printf("CopyScreen: Loaded '%s' by %s, %d paragraphs, height=%d\n",
-                      _title.c_str(), _author.c_str(), _paragraphs.size(), _contentHeight);
+        calculatePages();
+        Serial.printf("CopyScreen: Loaded '%s' by %s, %d paragraphs, %d pages\n",
+                      _title.c_str(), _author.c_str(), _paragraphs.size(), _totalPages);
     }
 
     requestRedraw();
@@ -60,38 +64,87 @@ bool CopyScreen::loadTodayContent() {
 }
 
 String CopyScreen::findEpubFile() {
-    // Look for EPUB files containing "365" in the filename
     File dir = SD.open(DIR_BOOKS);
     if (!dir) {
         Serial.println("CopyScreen: Cannot open books directory");
         return "";
     }
 
-    String foundPath = "";
+    String configMatch = "";  // Match for config.dailyEpub
+    String firstEpub = "";    // First EPUB found
+    String bestMatch = "";    // Best auto-detect match
+
+    Serial.printf("CopyScreen: Looking for EPUB (config: '%s')\n", config.dailyEpub.c_str());
+
     while (File entry = dir.openNextFile()) {
         String name = entry.name();
+        bool isFile = !entry.isDirectory();
         entry.close();
 
-        // Check if it's an EPUB file with "365" in the name
-        if (name.endsWith(".epub") && name.indexOf(EPUB_365_PATTERN) >= 0) {
-            foundPath = String(DIR_BOOKS) + "/" + name;
-            Serial.printf("CopyScreen: Found 365 EPUB: %s\n", foundPath.c_str());
-            break;
+        if (!isFile || !name.endsWith(".epub")) {
+            continue;
+        }
+
+        Serial.printf("CopyScreen: Found EPUB: %s\n", name.c_str());
+
+        String fullPath = String(DIR_BOOKS) + "/" + name;
+
+        // Check if this matches config.dailyEpub
+        if (config.dailyEpub.length() > 0 && name == config.dailyEpub) {
+            configMatch = fullPath;
+            Serial.printf("CopyScreen: Config match found!\n");
+            break;  // Found exact match, no need to continue
+        }
+
+        // Remember first EPUB as fallback
+        if (firstEpub.length() == 0) {
+            firstEpub = fullPath;
+        }
+
+        // Auto-detect: prefer files with "365" or "1日1話" in name
+        if (bestMatch.length() == 0 &&
+            (name.indexOf("365") >= 0 || name.indexOf("1日") >= 0 ||
+             name.indexOf("daily") >= 0 || name.indexOf("Daily") >= 0)) {
+            bestMatch = fullPath;
+            Serial.printf("CopyScreen: Auto-detect match: %s\n", name.c_str());
         }
     }
     dir.close();
 
-    return foundPath;
+    // Priority: config match > auto-detect > first EPUB
+    String result;
+    if (configMatch.length() > 0) {
+        result = configMatch;
+    } else if (bestMatch.length() > 0) {
+        result = bestMatch;
+    } else {
+        result = firstEpub;
+    }
+
+    if (result.length() > 0) {
+        Serial.printf("CopyScreen: Selected EPUB: %s\n", result.c_str());
+    }
+    return result;
 }
 
 bool CopyScreen::loadFromEpub(int dayOfYear) {
-    // Find EPUB file if not already opened
+    // Find the EPUB file that should be used
+    String targetPath = findEpubFile();
+    if (targetPath.length() == 0) {
+        Serial.println("CopyScreen: No EPUB found");
+        return false;
+    }
+
+    // If a different EPUB is requested, close current and open new
+    if (_epubParser.isOpen() && _epubPath != targetPath) {
+        Serial.printf("CopyScreen: Switching EPUB from %s to %s\n",
+                      _epubPath.c_str(), targetPath.c_str());
+        _epubParser.close();
+    }
+
+    // Open EPUB if not already open
     if (!_epubParser.isOpen()) {
-        _epubPath = findEpubFile();
-        if (_epubPath.length() == 0) {
-            Serial.println("CopyScreen: No 365 EPUB found");
-            return false;
-        }
+        _epubPath = targetPath;
 
         if (!_epubParser.open(_epubPath)) {
             Serial.println("CopyScreen: Failed to open EPUB");
@@ -238,41 +291,58 @@ bool CopyScreen::loadFromTextFile(int dayOfYear) {
     return _paragraphs.size() > 0;
 }
 
-int CopyScreen::calculateContentHeight() {
-    if (_paragraphs.empty()) return 0;
+void CopyScreen::calculatePages() {
+    _pageBreaks.clear();
+    _pageBreaks.push_back(0);  // First page starts at paragraph 0
+
+    if (_paragraphs.empty()) {
+        _totalPages = 0;
+        return;
+    }
 
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(1.0);
 
     int fontH = M5.Display.fontHeight();
-    int contentW = SCREEN_WIDTH - PAD_X * 2 - getScrollBarWidth();
-    int totalHeight = PAD_Y;  // Top padding
+    int contentW = SCREEN_WIDTH - PAD_X * 2;
+    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;  // Area above tab bar
+    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - PAD_Y * 2;
 
-    // Title section
-    totalHeight += fontH * 1.5 + 30;  // Title + author + spacing
+    int currentHeight = 0;
+    int paraIndex = 0;
 
-    // Each paragraph
-    for (const auto& para : _paragraphs) {
-        // Estimate wrapped height
+    while (paraIndex < _paragraphs.size()) {
+        const String& para = _paragraphs[paraIndex];
+
+        // Calculate wrapped height for this paragraph
         int paraWidth = M5.Display.textWidth(para.c_str());
         int lines = (paraWidth / contentW) + 1;
-        totalHeight += lines * (fontH + LINE_SPACING) + 20;  // Extra spacing between paragraphs
+        int paraHeight = lines * (fontH + LINE_SPACING) + PARAGRAPH_SPACING;
+
+        if (currentHeight + paraHeight > contentH && currentHeight > 0) {
+            // Start a new page
+            _pageBreaks.push_back(paraIndex);
+            currentHeight = paraHeight;
+        } else {
+            currentHeight += paraHeight;
+        }
+
+        paraIndex++;
     }
 
-    totalHeight += PAD_Y;  // Bottom padding
-    return totalHeight;
+    _totalPages = _pageBreaks.size();
+    Serial.printf("CopyScreen: Calculated %d pages\n", _totalPages);
 }
 
 void CopyScreen::drawHeader() {
-    int headerHeight = getHeaderHeight();
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, headerHeight, TFT_WHITE);
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, HEADER_HEIGHT, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(1.0);
     M5.Display.setTextColor(TFT_BLACK);
 
     int fontH = M5.Display.fontHeight();
-    int headerY = (headerHeight - fontH) / 2;
+    int headerY = (HEADER_HEIGHT - fontH) / 2;
 
     // Date on the right
     int dateWidth = M5.Display.textWidth(_date.c_str());
@@ -301,91 +371,115 @@ void CopyScreen::drawHeader() {
     }
 
     // Separator line
-    M5.Display.drawLine(PAD_X, headerHeight - 1, SCREEN_WIDTH - PAD_X, headerHeight - 1, TFT_BLACK);
+    M5.Display.drawLine(PAD_X, HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, HEADER_HEIGHT - 1, TFT_BLACK);
 }
 
-int CopyScreen::printWrappedAt(const String& text, int x, int y, int maxWidth) {
-    int fontH = M5.Display.fontHeight();
-    int headerHeight = getHeaderHeight();
-    int currentY = y;
-    int bytePos = 0;
-    int byteLen = text.length();
+void CopyScreen::drawPageContent() {
+    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    int contentY = HEADER_HEIGHT + PAD_Y;
+    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT;
 
-    while (bytePos < byteLen) {
-        int lineEnd = bytePos;
+    // Clear content area
+    M5.Display.fillRect(0, HEADER_HEIGHT, SCREEN_WIDTH, contentH, TFT_WHITE);
 
-        // Find line break point
-        while (lineEnd < byteLen) {
-            int charLen = 1;
-            uint8_t c = text[lineEnd];
-            if (c >= 0xF0) charLen = 4;
-            else if (c >= 0xE0) charLen = 3;
-            else if (c >= 0xC0) charLen = 2;
-
-            String sub = text.substring(bytePos, lineEnd + charLen);
-            if (M5.Display.textWidth(sub.c_str()) > maxWidth) break;
-
-            lineEnd += charLen;
-        }
-
-        if (lineEnd == bytePos) lineEnd += 1;
-
-        // Only draw if visible
-        if (currentY >= headerHeight - fontH && currentY < CONTENT_HEIGHT) {
-            M5.Display.setCursor(x, currentY);
-            M5.Display.print(text.substring(bytePos, lineEnd));
-        }
-
-        bytePos = lineEnd;
-        currentY += fontH + LINE_SPACING;
+    if (_currentPage >= _totalPages || _pageBreaks.empty()) {
+        return;
     }
-
-    return currentY;
-}
-
-void CopyScreen::drawContent() {
-    int headerHeight = getHeaderHeight();
-    int visibleHeight = getVisibleHeight();
-
-    // Clear content area (below header)
-    M5.Display.fillRect(0, headerHeight, SCREEN_WIDTH - getScrollBarWidth(), visibleHeight, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(1.0);
     M5.Display.setTextColor(TFT_BLACK);
 
     int fontH = M5.Display.fontHeight();
-    int contentW = SCREEN_WIDTH - PAD_X * 2 - getScrollBarWidth();
+    int contentW = SCREEN_WIDTH - PAD_X * 2;
+    int maxY = availableHeight - NAV_HEIGHT - PAD_Y;
 
-    // Apply scroll offset
-    int y = headerHeight + PAD_Y - _scrollY;
+    int startPara = _pageBreaks[_currentPage];
+    int endPara = (_currentPage + 1 < _totalPages) ? _pageBreaks[_currentPage + 1] : _paragraphs.size();
 
-    // Title (larger)
-    M5.Display.setTextSize(1.2);
-    if (y > headerHeight - 40 && y < CONTENT_HEIGHT) {
-        M5.Display.setCursor(PAD_X, y);
-        M5.Display.print(_title);
+    int y = contentY;
+
+    for (int i = startPara; i < endPara && y < maxY; i++) {
+        const String& para = _paragraphs[i];
+
+        // Draw wrapped text
+        int bytePos = 0;
+        int byteLen = para.length();
+
+        while (bytePos < byteLen && y < maxY) {
+            int lineEnd = bytePos;
+
+            // Find line break point
+            while (lineEnd < byteLen) {
+                int charLen = 1;
+                uint8_t c = para[lineEnd];
+                if (c >= 0xF0) charLen = 4;
+                else if (c >= 0xE0) charLen = 3;
+                else if (c >= 0xC0) charLen = 2;
+
+                String sub = para.substring(bytePos, lineEnd + charLen);
+                if (M5.Display.textWidth(sub.c_str()) > contentW) break;
+
+                lineEnd += charLen;
+            }
+
+            if (lineEnd == bytePos) lineEnd += 1;
+
+            // Draw this line
+            M5.Display.setCursor(PAD_X, y);
+            M5.Display.print(para.substring(bytePos, lineEnd));
+
+            bytePos = lineEnd;
+            y += fontH + LINE_SPACING;
+        }
+
+        y += PARAGRAPH_SPACING - LINE_SPACING;  // Extra space between paragraphs
     }
-    y += fontH * 1.5;
+}
 
-    // Author
+void CopyScreen::drawNavigation() {
+    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    int navY = availableHeight - NAV_HEIGHT;
+
+    // Clear navigation area
+    M5.Display.fillRect(0, navY, SCREEN_WIDTH, NAV_HEIGHT, TFT_WHITE);
+
+    // Separator line
+    M5.Display.drawLine(PAD_X, navY, SCREEN_WIDTH - PAD_X, navY, TFT_LIGHTGRAY);
+
+    M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);
-    if (y > headerHeight - 30 && y < CONTENT_HEIGHT) {
-        M5.Display.setCursor(PAD_X, y);
-        M5.Display.print("― ");
-        M5.Display.print(_author);
-    }
-    y += fontH + 30;
 
-    // Paragraphs
-    for (const auto& para : _paragraphs) {
-        y = printWrappedAt(para, PAD_X, y, contentW);
-        y += 20;  // Paragraph spacing
+    int buttonY = navY + (NAV_HEIGHT - 30) / 2;
+    int buttonW = 120;
+
+    // Previous button (left)
+    if (_currentPage > 0) {
+        M5.Display.setTextColor(TFT_BLACK);
+        M5.Display.setCursor(PAD_X + 20, buttonY);
+        M5.Display.print("< 이전");
+    }
+
+    // Page indicator (center)
+    M5.Display.setTextColor(TFT_DARKGRAY);
+    String pageInfo = String(_currentPage + 1) + " / " + String(_totalPages);
+    int pageInfoW = M5.Display.textWidth(pageInfo.c_str());
+    M5.Display.setCursor((SCREEN_WIDTH - pageInfoW) / 2, buttonY);
+    M5.Display.print(pageInfo);
+
+    // Next button (right)
+    if (_currentPage < _totalPages - 1) {
+        M5.Display.setTextColor(TFT_BLACK);
+        String nextText = "다음 >";
+        int nextW = M5.Display.textWidth(nextText.c_str());
+        M5.Display.setCursor(SCREEN_WIDTH - PAD_X - nextW - 20, buttonY);
+        M5.Display.print(nextText);
     }
 }
 
 void CopyScreen::drawEmptyState() {
-    clearContentArea();
+    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, availableHeight, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);
@@ -394,7 +488,7 @@ void CopyScreen::drawEmptyState() {
     auto dt = M5.Rtc.getDateTime();
     int dayOfYear = getDayOfYear(dt.date.month, dt.date.date);
 
-    int centerY = CONTENT_HEIGHT / 2;
+    int centerY = availableHeight / 2;
 
     M5.Display.setCursor(PAD_X, centerY - 80);
     M5.Display.printf("%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
@@ -417,11 +511,59 @@ void CopyScreen::drawEmptyState() {
 }
 
 void CopyScreen::draw() {
+    // Use fast refresh mode for less flickering
+    M5.Display.setEpdMode(epd_mode_t::epd_fast);
+
+    // Batch all drawing operations - no screen update until endWrite()
+    M5.Display.startWrite();
+
     if (_paragraphs.empty()) {
         drawEmptyState();
-        return;
+    } else {
+        drawHeader();
+        drawPageContent();
+        drawNavigation();
     }
 
-    // Use ScrollableScreen's template method
-    ScrollableScreen::draw();
+    // Now update the screen once
+    M5.Display.endWrite();
+}
+
+bool CopyScreen::handleTouchStart(int x, int y) {
+    if (_paragraphs.empty() || _totalPages == 0) {
+        return false;
+    }
+
+    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    int navY = availableHeight - NAV_HEIGHT;
+
+    // Only handle touches in navigation area (above tab bar)
+    if (y < navY || y >= availableHeight) {
+        return false;
+    }
+
+    bool pageChanged = false;
+
+    // Left side - previous page
+    if (x < SCREEN_WIDTH / 3 && _currentPage > 0) {
+        _currentPage--;
+        pageChanged = true;
+    }
+    // Right side - next page
+    else if (x > SCREEN_WIDTH * 2 / 3 && _currentPage < _totalPages - 1) {
+        _currentPage++;
+        pageChanged = true;
+    }
+
+    if (pageChanged) {
+        // Direct draw without explicit display() - avoids flicker and ghosting
+        M5.Display.startWrite();
+        drawPageContent();
+        drawNavigation();
+        M5.Display.endWrite();
+        // Return false to prevent main loop from triggering aggressive refresh
+        return false;
+    }
+
+    return false;
 }

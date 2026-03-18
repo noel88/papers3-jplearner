@@ -54,6 +54,9 @@ struct Config {
     String fontSize = "medium";  // small, medium, large
     String startScreen = "copy"; // word, grammar, copy, read
 
+    // Daily reading (Copy screen)
+    String dailyEpub = "";  // EPUB filename for daily content (empty = auto-detect)
+
     // System settings
     int sleepMinutes = 5;
 

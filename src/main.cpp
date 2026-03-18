@@ -186,6 +186,7 @@ bool loadConfig() {
     config.reviewLimit = doc["learning"]["reviewLimit"] | -1;
     config.fontSize = doc["display"]["fontSize"] | "medium";
     config.startScreen = doc["display"]["startScreen"] | "copy";
+    config.dailyEpub = doc["display"]["dailyEpub"] | "";
     config.sleepMinutes = doc["system"]["sleepMinutes"] | 5;
     config.apSsid = doc["wifi"]["ap"]["ssid"] | "Papers3-JP";
     config.apPassword = doc["wifi"]["ap"]["password"] | "12345678";
@@ -205,6 +206,7 @@ bool saveConfig() {
     doc["learning"]["reviewLimit"] = config.reviewLimit;
     doc["display"]["fontSize"] = config.fontSize;
     doc["display"]["startScreen"] = config.startScreen;
+    doc["display"]["dailyEpub"] = config.dailyEpub;
     doc["system"]["sleepMinutes"] = config.sleepMinutes;
     doc["wifi"]["ap"]["ssid"] = config.apSsid;
     doc["wifi"]["ap"]["password"] = config.apPassword;

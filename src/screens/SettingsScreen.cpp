@@ -1,4 +1,5 @@
 #include "screens/SettingsScreen.h"
+#include "Config.h"
 #include <M5Unified.h>
 #include <SD.h>
 
@@ -8,7 +9,8 @@ extern uint64_t getSDCardFreeSpace();
 SettingsScreen::SettingsScreen()
     : BaseScreen()
     , _state(SettingsState::Main)
-    , _wifiModeCallback(nullptr) {
+    , _wifiModeCallback(nullptr)
+    , _epubScrollOffset(0) {
 }
 
 void SettingsScreen::onExit() {
@@ -31,6 +33,9 @@ void SettingsScreen::draw() {
         case SettingsState::Display:
             drawDisplaySettings();
             break;
+        case SettingsState::DailyEpub:
+            drawDailyEpubSettings();
+            break;
         case SettingsState::Learning:
             drawLearningSettings();
             break;
@@ -51,6 +56,8 @@ bool SettingsScreen::handleTouchStart(int x, int y) {
             return handleWiFiAPTouch(x, y);
         case SettingsState::WiFiSTA:
             return handleWiFiSTATouch(x, y);
+        case SettingsState::DailyEpub:
+            return handleDailyEpubTouch(x, y);
         case SettingsState::Display:
         case SettingsState::Learning:
         case SettingsState::System:
@@ -85,13 +92,14 @@ void SettingsScreen::drawMainMenu() {
     const char* menuItems[] = {
         "WiFi 파일 전송",
         "WiFi 연결 설정",
+        "필사 EPUB 선택",
         "화면 설정",
         "학습 설정",
         "시스템 설정",
         "SD 카드 정보"
     };
 
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         // Draw item background (alternating)
         if (i % 2 == 0) {
             M5.Display.fillRect(0, y, SCREEN_WIDTH, ITEM_HEIGHT - 1, 0xF7BE);
@@ -266,7 +274,7 @@ void SettingsScreen::drawSystemSettings() {
 
 bool SettingsScreen::handleMainMenuTouch(int x, int y) {
     // Check which menu item was touched
-    if (y >= ITEMS_START_Y && y < ITEMS_START_Y + 6 * ITEM_HEIGHT) {
+    if (y >= ITEMS_START_Y && y < ITEMS_START_Y + 7 * ITEM_HEIGHT) {
         int itemIndex = (y - ITEMS_START_Y) / ITEM_HEIGHT;
         Serial.printf("SettingsScreen: item touched: %d\n", itemIndex);
 
@@ -279,19 +287,24 @@ bool SettingsScreen::handleMainMenuTouch(int x, int y) {
                 _state = SettingsState::WiFiSTA;
                 requestRedraw();
                 return true;
-            case 2:  // 화면 설정
+            case 2:  // 필사 EPUB 선택
+                scanEpubFiles();
+                _state = SettingsState::DailyEpub;
+                requestRedraw();
+                return true;
+            case 3:  // 화면 설정
                 _state = SettingsState::Display;
                 requestRedraw();
                 return true;
-            case 3:  // 학습 설정
+            case 4:  // 학습 설정
                 _state = SettingsState::Learning;
                 requestRedraw();
                 return true;
-            case 4:  // 시스템 설정
+            case 5:  // 시스템 설정
                 _state = SettingsState::System;
                 requestRedraw();
                 return true;
-            case 5:  // SD 카드 정보
+            case 6:  // SD 카드 정보
                 // Just show info, no action needed
                 break;
         }
@@ -341,5 +354,218 @@ bool SettingsScreen::handleBackButton(int y) {
         requestRedraw();
         return true;
     }
+    return false;
+}
+
+// ============================================
+// EPUB Selection
+// ============================================
+
+void SettingsScreen::scanEpubFiles() {
+    _epubFiles.clear();
+    _epubScrollOffset = 0;
+
+    // Add "자동 선택" option first
+    _epubFiles.push_back("(자동 선택)");
+
+    File dir = SD.open("/books");
+    if (!dir) {
+        Serial.println("SettingsScreen: Cannot open books directory");
+        return;
+    }
+
+    while (File entry = dir.openNextFile()) {
+        String name = entry.name();
+        bool isFile = !entry.isDirectory();
+        entry.close();
+
+        if (isFile && name.endsWith(".epub")) {
+            _epubFiles.push_back(name);
+            Serial.printf("SettingsScreen: Found EPUB: %s\n", name.c_str());
+        }
+    }
+    dir.close();
+
+    Serial.printf("SettingsScreen: Total %d EPUB files\n", _epubFiles.size() - 1);
+}
+
+void SettingsScreen::drawDailyEpubSettings() {
+    clearContentArea();
+
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Title with back button
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    M5.Display.print("< 필사 EPUB 선택");
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    // Current selection info
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, 55);
+    M5.Display.printf("Page %d/%d", _epubScrollOffset / 6 + 1,
+                      (_epubFiles.size() + 5) / 6);
+
+    M5.Display.setTextSize(0.8);
+
+    // List EPUB files
+    int y = 85;
+    int maxVisible = 5;  // Show 5 items to leave room for buttons
+
+    for (int i = _epubScrollOffset; i < _epubFiles.size() && i < _epubScrollOffset + maxVisible; i++) {
+        bool isSelected = false;
+
+        // Check if this is the selected file
+        if (i == 0 && config.dailyEpub.length() == 0) {
+            isSelected = true;  // Auto-detect selected
+        } else if (i > 0 && config.dailyEpub == _epubFiles[i]) {
+            isSelected = true;
+        }
+
+        // Background for alternating rows
+        if ((i - _epubScrollOffset) % 2 == 0) {
+            M5.Display.fillRect(0, y, SCREEN_WIDTH, ITEM_HEIGHT - 1, 0xF7BE);
+        }
+
+        // Selection indicator
+        if (isSelected) {
+            M5.Display.fillRect(0, y, 8, ITEM_HEIGHT - 1, TFT_BLACK);
+        }
+
+        // Use Korean font for first item, Japanese for EPUB filenames
+        if (i == 0) {
+            M5.Display.setFont(&fonts::efontKR_24);
+        } else {
+            M5.Display.setFont(&fonts::efontJA_24);
+        }
+        M5.Display.setTextSize(0.8);
+
+        // File name (truncate if too long)
+        String displayName = _epubFiles[i];
+        int maxWidth = SCREEN_WIDTH - PAD_X * 2 - 60;
+
+        // Truncate for display
+        while (M5.Display.textWidth(displayName.c_str()) > maxWidth && displayName.length() > 10) {
+            displayName = displayName.substring(0, displayName.length() - 1);
+        }
+        if (displayName.length() < _epubFiles[i].length()) {
+            displayName += "...";
+        }
+
+        M5.Display.setCursor(PAD_X + 10, y + 12);
+        M5.Display.print(displayName);
+
+        // Draw bottom border
+        M5.Display.drawLine(PAD_X, y + ITEM_HEIGHT - 1,
+                           SCREEN_WIDTH - PAD_X, y + ITEM_HEIGHT - 1, 0xDEDB);
+
+        y += ITEM_HEIGHT;
+    }
+
+    // Navigation buttons - only show if more than one page
+    bool needsPaging = _epubFiles.size() > maxVisible;
+
+    if (needsPaging) {
+        M5.Display.setFont(&fonts::efontKR_24);
+        M5.Display.setTextSize(1.0);
+
+        int btnY = y + 10;  // Right after the list
+        int btnW = 180;
+        int btnH = 50;
+
+        // Previous page button
+        if (_epubScrollOffset > 0) {
+            M5.Display.fillRect(PAD_X, btnY, btnW, btnH, TFT_BLACK);
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setCursor(PAD_X + 40, btnY + 12);
+            M5.Display.print("< 이전");
+        }
+
+        // Next page button
+        int nextBtnX = SCREEN_WIDTH - PAD_X - btnW;
+        if (_epubScrollOffset + maxVisible < _epubFiles.size()) {
+            M5.Display.fillRect(nextBtnX, btnY, btnW, btnH, TFT_BLACK);
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setCursor(nextBtnX + 40, btnY + 12);
+            M5.Display.print("다음 >");
+        }
+
+        M5.Display.setTextColor(TFT_BLACK);
+    }
+
+    // Help text at bottom
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(0x8410);  // Gray
+    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 25);
+    M5.Display.print("Tap to select. Touch top to go back.");
+    M5.Display.setTextColor(TFT_BLACK);
+}
+
+bool SettingsScreen::handleDailyEpubTouch(int x, int y) {
+    // Back button (top area)
+    if (y < BACK_BUTTON_HEIGHT) {
+        _state = SettingsState::Main;
+        requestRedraw();
+        return true;
+    }
+
+    int maxVisible = 5;
+    int listStartY = 85;
+    int visibleCount = min((int)_epubFiles.size() - _epubScrollOffset, maxVisible);
+    int listEndY = listStartY + visibleCount * ITEM_HEIGHT;
+
+    // Navigation buttons (only if paging is needed)
+    bool needsPaging = _epubFiles.size() > maxVisible;
+    if (needsPaging) {
+        int btnY = listEndY + 10;
+        int btnW = 180;
+        int btnH = 50;
+
+        if (y >= btnY && y <= btnY + btnH) {
+            // Previous page button
+            if (x >= PAD_X && x <= PAD_X + btnW && _epubScrollOffset > 0) {
+                _epubScrollOffset -= maxVisible;
+                if (_epubScrollOffset < 0) _epubScrollOffset = 0;
+                requestRedraw();
+                return true;
+            }
+
+            // Next page button
+            int nextBtnX = SCREEN_WIDTH - PAD_X - btnW;
+            if (x >= nextBtnX && x <= nextBtnX + btnW &&
+                _epubScrollOffset + maxVisible < _epubFiles.size()) {
+                _epubScrollOffset += maxVisible;
+                requestRedraw();
+                return true;
+            }
+        }
+    }
+
+    // EPUB list selection - only within actual list items
+    if (y >= listStartY && y < listEndY) {
+        int touchedIndex = (y - listStartY) / ITEM_HEIGHT + _epubScrollOffset;
+
+        if (touchedIndex >= 0 && touchedIndex < _epubFiles.size()) {
+            if (touchedIndex == 0) {
+                // Auto-detect
+                config.dailyEpub = "";
+            } else {
+                config.dailyEpub = _epubFiles[touchedIndex];
+            }
+
+            Serial.printf("SettingsScreen: Selected EPUB: %s\n",
+                          config.dailyEpub.length() > 0 ? config.dailyEpub.c_str() : "(auto)");
+
+            // Save config
+            saveConfig();
+
+            // Go back to main menu after selection
+            _state = SettingsState::Main;
+            requestRedraw();
+            return true;
+        }
+    }
+
     return false;
 }

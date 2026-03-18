@@ -12,9 +12,6 @@
 // ============================================
 AsyncWebServer server(80);
 
-// Use M5.Display for all display operations
-#define display M5.Display
-
 // M5Paper S3 SD Card pins (correct pinout)
 #define SD_CS   47
 #define SD_SCK  39
@@ -523,23 +520,23 @@ bool ensureDirectories() {
 }
 
 void showSDCardError(const char* message) {
-    display.fillScreen(TFT_WHITE);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.setTextColor(TFT_BLACK);
 
     int centerY = CONTENT_HEIGHT / 2;
 
-    display.setCursor(PAD_X, centerY - 40);
-    display.setTextSize(1.0);
-    display.println("SD Card Error");
+    M5.Display.setCursor(PAD_X, centerY - 40);
+    M5.Display.setTextSize(1.0);
+    M5.Display.println("SD Card Error");
 
-    display.setCursor(PAD_X, centerY + 20);
-    display.setTextSize(1.0);
-    display.println(message);
+    M5.Display.setCursor(PAD_X, centerY + 20);
+    M5.Display.setTextSize(1.0);
+    M5.Display.println(message);
 
-    display.setCursor(PAD_X, centerY + 60);
-    display.println("Please insert SD card and restart.");
+    M5.Display.setCursor(PAD_X, centerY + 60);
+    M5.Display.println("Please insert SD card and restart.");
 
-    display.display();
+    M5.Display.display();
 }
 
 uint64_t getSDCardFreeSpace() {
@@ -671,67 +668,67 @@ void drawTabBar() {
     int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
 
     // Draw tab bar background
-    display.fillRect(0, tabY, SCREEN_WIDTH, TAB_BAR_HEIGHT, TFT_WHITE);
+    M5.Display.fillRect(0, tabY, SCREEN_WIDTH, TAB_BAR_HEIGHT, TFT_WHITE);
 
     // Draw top border line
-    display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
+    M5.Display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
 
     // Draw each tab
-    display.setFont(&fonts::efontKR_24);
-    display.setTextSize(0.8);  // Scale down for tab bar
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(0.8);  // Scale down for tab bar
 
     for (int i = 0; i < TAB_COUNT; i++) {
         int tabX = i * TAB_WIDTH;
 
         // Highlight current tab
         if (i == currentTab) {
-            display.fillRect(tabX + 2, tabY + 2, TAB_WIDTH - 4, TAB_BAR_HEIGHT - 4, TFT_BLACK);
-            display.setTextColor(TFT_WHITE);
+            M5.Display.fillRect(tabX + 2, tabY + 2, TAB_WIDTH - 4, TAB_BAR_HEIGHT - 4, TFT_BLACK);
+            M5.Display.setTextColor(TFT_WHITE);
         } else {
-            display.setTextColor(TFT_BLACK);
+            M5.Display.setTextColor(TFT_BLACK);
         }
 
         // Draw tab label centered
-        int labelWidth = display.textWidth(TAB_LABELS[i]);
+        int labelWidth = M5.Display.textWidth(TAB_LABELS[i]);
         int labelX = tabX + (TAB_WIDTH - labelWidth) / 2;
-        int labelY = tabY + (TAB_BAR_HEIGHT - display.fontHeight()) / 2;
+        int labelY = tabY + (TAB_BAR_HEIGHT - M5.Display.fontHeight()) / 2;
 
-        display.setCursor(labelX, labelY);
-        display.print(TAB_LABELS[i]);
+        M5.Display.setCursor(labelX, labelY);
+        M5.Display.print(TAB_LABELS[i]);
 
         // Draw vertical separator (except for last tab)
         if (i < TAB_COUNT - 1) {
-            display.drawLine(tabX + TAB_WIDTH, tabY + 8, tabX + TAB_WIDTH, tabY + TAB_BAR_HEIGHT - 8, 0x7BEF);  // Gray color
+            M5.Display.drawLine(tabX + TAB_WIDTH, tabY + 8, tabX + TAB_WIDTH, tabY + TAB_BAR_HEIGHT - 8, 0x7BEF);  // Gray color
         }
     }
 
     // Reset text color
-    display.setTextColor(TFT_BLACK);
+    M5.Display.setTextColor(TFT_BLACK);
 
     // Draw battery indicator
     int battX = TAB_COUNT * TAB_WIDTH + 10;
     int battY = tabY + (TAB_BAR_HEIGHT - 24) / 2;
 
     // Battery icon outline
-    display.drawRect(battX, battY, 40, 24, TFT_BLACK);
-    display.fillRect(battX + 40, battY + 6, 4, 12, TFT_BLACK);  // Battery tip
+    M5.Display.drawRect(battX, battY, 40, 24, TFT_BLACK);
+    M5.Display.fillRect(battX + 40, battY + 6, 4, 12, TFT_BLACK);  // Battery tip
 
     // Battery fill level
     int fillWidth = (36 * batteryPercent) / 100;
     if (fillWidth > 0) {
-        display.fillRect(battX + 2, battY + 2, fillWidth, 20, TFT_BLACK);
+        M5.Display.fillRect(battX + 2, battY + 2, fillWidth, 20, TFT_BLACK);
     }
 
     // Battery percentage text
-    display.setFont(&fonts::Font2);
+    M5.Display.setFont(&fonts::Font2);
     char battText[8];
     sprintf(battText, "%d%%", batteryPercent);
-    display.setCursor(battX + 48, battY + 4);
-    display.print(battText);
+    M5.Display.setCursor(battX + 48, battY + 4);
+    M5.Display.print(battText);
 
     // Reset font
-    display.setFont(&fonts::efontKR_24);
-    display.setTextSize(1.0);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
 }
 
 int handleTabTouch(int touchX, int touchY) {
@@ -934,43 +931,43 @@ void startWiFiMode() {
     setupWebServer();
 
     // Display WiFi info
-    display.fillScreen(TFT_WHITE);
-    display.setTextColor(TFT_BLACK);
-    display.setTextSize(1.0);
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextSize(1.0);
 
     int y = PAD_Y;
-    display.setCursor(PAD_X, y);
-    display.println("WiFi File Transfer Mode");
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("WiFi File Transfer Mode");
     y += 60;
 
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X, y);
-    display.println("1. Connect to WiFi:");
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("1. Connect to WiFi:");
     y += 40;
 
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X + 40, y);
-    display.printf("SSID: %s", config.apSsid.c_str());
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X + 40, y);
+    M5.Display.printf("SSID: %s", config.apSsid.c_str());
     y += 35;
-    display.setCursor(PAD_X + 40, y);
-    display.printf("Pass: %s", config.apPassword.c_str());
+    M5.Display.setCursor(PAD_X + 40, y);
+    M5.Display.printf("Pass: %s", config.apPassword.c_str());
     y += 50;
 
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X, y);
-    display.println("2. Open browser:");
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("2. Open browser:");
     y += 40;
 
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X + 40, y);
-    display.printf("http://%s", IP.toString().c_str());
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X + 40, y);
+    M5.Display.printf("http://%s", IP.toString().c_str());
     y += 60;
 
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X, y);
-    display.println("Touch screen to exit WiFi mode");
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("Touch screen to exit WiFi mode");
 
-    display.display();
+    M5.Display.display();
 }
 
 void stopWiFiMode() {
@@ -1034,21 +1031,21 @@ bool loadTodaySentences() {
 // Tab Content Drawing Functions
 // ============================================
 void drawPlaceholderContent(const char* tabName, const char* description) {
-    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
 
-    display.setFont(&fonts::efontKR_24);
-    display.setTextSize(1.0);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
 
     // Title - centered
-    int titleWidth = display.textWidth(tabName);
-    display.setCursor((SCREEN_WIDTH - titleWidth) / 2, CONTENT_HEIGHT / 2 - 40);
-    display.print(tabName);
+    int titleWidth = M5.Display.textWidth(tabName);
+    M5.Display.setCursor((SCREEN_WIDTH - titleWidth) / 2, CONTENT_HEIGHT / 2 - 40);
+    M5.Display.print(tabName);
 
     // Description - centered
-    int descWidth = display.textWidth(description);
-    display.setCursor((SCREEN_WIDTH - descWidth) / 2, CONTENT_HEIGHT / 2 + 20);
-    display.print(description);
+    int descWidth = M5.Display.textWidth(description);
+    M5.Display.setCursor((SCREEN_WIDTH - descWidth) / 2, CONTENT_HEIGHT / 2 + 20);
+    M5.Display.print(description);
 }
 
 void drawWordTab() {
@@ -1075,19 +1072,19 @@ const int SETTINGS_ITEM_HEIGHT = 55;
 const int SETTINGS_ITEMS_START_Y = 60;
 
 void drawSettingsMainMenu() {
-    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    display.setFont(&fonts::efontKR_24);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
 
     // Title
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X, PAD_Y);
-    display.print("설정");
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    M5.Display.print("설정");
 
     // Divider
-    display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
-    display.setTextSize(1.0);
+    M5.Display.setTextSize(1.0);
     int y = SETTINGS_ITEMS_START_Y;
 
     // Menu items
@@ -1103,58 +1100,58 @@ void drawSettingsMainMenu() {
     for (int i = 0; i < 6; i++) {
         // Draw item background (alternating)
         if (i % 2 == 0) {
-            display.fillRect(0, y, SCREEN_WIDTH, SETTINGS_ITEM_HEIGHT - 1, 0xF7BE);  // Light gray
+            M5.Display.fillRect(0, y, SCREEN_WIDTH, SETTINGS_ITEM_HEIGHT - 1, 0xF7BE);  // Light gray
         }
 
         // Draw item label
-        display.setCursor(PAD_X, y + 15);
-        display.print(menuItems[i]);
+        M5.Display.setCursor(PAD_X, y + 15);
+        M5.Display.print(menuItems[i]);
 
         // Draw arrow
-        display.setCursor(SCREEN_WIDTH - 60, y + 15);
-        display.print(">");
+        M5.Display.setCursor(SCREEN_WIDTH - 60, y + 15);
+        M5.Display.print(">");
 
         // Draw bottom border
-        display.drawLine(PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, SCREEN_WIDTH - PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, 0xDEDB);
+        M5.Display.drawLine(PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, SCREEN_WIDTH - PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, 0xDEDB);
 
         y += SETTINGS_ITEM_HEIGHT;
     }
 
     // SD Card info at bottom
-    display.setFont(&fonts::Font2);
-    display.setCursor(PAD_X, CONTENT_HEIGHT - 30);
-    display.printf("SD: %llu MB free / %llu MB total",
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 30);
+    M5.Display.printf("SD: %llu MB free / %llu MB total",
         getSDCardFreeSpace() / (1024 * 1024),
         SD.totalBytes() / (1024 * 1024));
 
-    display.setFont(&fonts::efontKR_24);
+    M5.Display.setFont(&fonts::efontKR_24);
 }
 
 void drawWiFiAPSettings() {
-    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    display.setFont(&fonts::efontKR_24);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
 
     // Title with back button
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X, PAD_Y);
-    display.print("< WiFi 파일 전송");
-    display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    M5.Display.print("< WiFi 파일 전송");
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
-    display.setTextSize(1.0);
+    M5.Display.setTextSize(1.0);
     int y = SETTINGS_ITEMS_START_Y + 10;
 
     // Current AP settings
-    display.setCursor(PAD_X, y);
-    display.print("현재 설정:");
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("현재 설정:");
     y += 40;
 
-    display.setCursor(PAD_X + 20, y);
-    display.printf("SSID: %s", config.apSsid.c_str());
+    M5.Display.setCursor(PAD_X + 20, y);
+    M5.Display.printf("SSID: %s", config.apSsid.c_str());
     y += 35;
 
-    display.setCursor(PAD_X + 20, y);
-    display.printf("비밀번호: %s", config.apPassword.c_str());
+    M5.Display.setCursor(PAD_X + 20, y);
+    M5.Display.printf("비밀번호: %s", config.apPassword.c_str());
     y += 50;
 
     // Start button
@@ -1163,61 +1160,61 @@ void drawWiFiAPSettings() {
     int btnH = 60;
     int btnX = (SCREEN_WIDTH - btnW) / 2;
 
-    display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
-    display.setTextColor(TFT_WHITE);
-    display.setTextSize(1.0);
+    M5.Display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setTextSize(1.0);
 
-    int textW = display.textWidth("파일 전송 시작");
-    display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
-    display.print("파일 전송 시작");
+    int textW = M5.Display.textWidth("파일 전송 시작");
+    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
+    M5.Display.print("파일 전송 시작");
 
-    display.setTextColor(TFT_BLACK);
-    display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextSize(1.0);
 
     // Instructions
     y = btnY + btnH + 30;
-    display.setFont(&fonts::Font2);
-    display.setCursor(PAD_X, y);
-    display.print("1. Start file transfer");
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("1. Start file transfer");
     y += 25;
-    display.setCursor(PAD_X, y);
-    display.printf("2. Connect to WiFi '%s'", config.apSsid.c_str());
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.printf("2. Connect to WiFi '%s'", config.apSsid.c_str());
     y += 25;
-    display.setCursor(PAD_X, y);
-    display.print("3. Open http://192.168.4.1 in browser");
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("3. Open http://192.168.4.1 in browser");
 
-    display.setFont(&fonts::efontKR_24);
+    M5.Display.setFont(&fonts::efontKR_24);
 }
 
 void drawWiFiSTASettings() {
-    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    display.setFont(&fonts::efontKR_24);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
 
     // Title with back button
-    display.setTextSize(1.0);
-    display.setCursor(PAD_X, PAD_Y);
-    display.print("< WiFi 연결 설정");
-    display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    M5.Display.print("< WiFi 연결 설정");
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
-    display.setTextSize(1.0);
+    M5.Display.setTextSize(1.0);
     int y = SETTINGS_ITEMS_START_Y + 10;
 
     // Current Station settings
-    display.setCursor(PAD_X, y);
-    display.print("외부 WiFi 연결:");
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("외부 WiFi 연결:");
     y += 40;
 
     if (config.staSsid.length() > 0) {
-        display.setCursor(PAD_X + 20, y);
-        display.printf("SSID: %s", config.staSsid.c_str());
+        M5.Display.setCursor(PAD_X + 20, y);
+        M5.Display.printf("SSID: %s", config.staSsid.c_str());
         y += 35;
 
-        display.setCursor(PAD_X + 20, y);
-        display.print("상태: 설정됨");
+        M5.Display.setCursor(PAD_X + 20, y);
+        M5.Display.print("상태: 설정됨");
     } else {
-        display.setCursor(PAD_X + 20, y);
-        display.print("설정된 네트워크 없음");
+        M5.Display.setCursor(PAD_X + 20, y);
+        M5.Display.print("설정된 네트워크 없음");
     }
     y += 50;
 
@@ -1227,25 +1224,25 @@ void drawWiFiSTASettings() {
     int btnH = 50;
     int btnX = (SCREEN_WIDTH - btnW) / 2;
 
-    display.drawRect(btnX, btnY, btnW, btnH, TFT_BLACK);
-    display.setTextSize(1.1);
+    M5.Display.drawRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    M5.Display.setTextSize(1.1);
 
-    int textW = display.textWidth("WiFi 스캔");
-    display.setCursor(btnX + (btnW - textW) / 2, btnY + 12);
-    display.print("WiFi 스캔");
+    int textW = M5.Display.textWidth("WiFi 스캔");
+    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 12);
+    M5.Display.print("WiFi 스캔");
 
-    display.setTextSize(1.0);
+    M5.Display.setTextSize(1.0);
 
     // Note
     y = btnY + btnH + 40;
-    display.setFont(&fonts::Font2);
-    display.setCursor(PAD_X, y);
-    display.print("Note: WiFi scan feature coming soon.");
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("Note: WiFi scan feature coming soon.");
     y += 25;
-    display.setCursor(PAD_X, y);
-    display.print("Currently use AP mode for file transfer.");
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("Currently use AP mode for file transfer.");
 
-    display.setFont(&fonts::efontKR_24);
+    M5.Display.setFont(&fonts::efontKR_24);
 }
 
 void drawSettingsTab() {
@@ -1269,7 +1266,7 @@ void drawSettingsTab() {
 // Display Functions
 // ============================================
 int printWrapped(const String& text, int x, int y, int maxW) {
-    int fontH = display.fontHeight();
+    int fontH = M5.Display.fontHeight();
     int bytePos = 0;
     int byteLen = text.length();
 
@@ -1285,7 +1282,7 @@ int printWrapped(const String& text, int x, int y, int maxW) {
             else if (c >= 0xC0) charBytes = 2;
 
             String ch = text.substring(lineEnd, lineEnd + charBytes);
-            int chW = display.textWidth(ch.c_str());
+            int chW = M5.Display.textWidth(ch.c_str());
 
             if (lineWidth + chW > maxW) break;
             lineWidth += chW;
@@ -1294,8 +1291,8 @@ int printWrapped(const String& text, int x, int y, int maxW) {
 
         if (lineEnd == bytePos) lineEnd += 1;
 
-        display.setCursor(x, y);
-        display.print(text.substring(bytePos, lineEnd));
+        M5.Display.setCursor(x, y);
+        M5.Display.print(text.substring(bytePos, lineEnd));
         bytePos = lineEnd;
 
         if (bytePos < byteLen) {
@@ -1306,42 +1303,42 @@ int printWrapped(const String& text, int x, int y, int maxW) {
 }
 
 void drawCopyTitlePage() {
-    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
     int contentW = SCREEN_WIDTH - PAD_X * 2;
     int y = PAD_Y;
 
     // Japanese font for Japanese content
-    display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.0);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.setFont(&fonts::efontJA_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
 
-    int fontH = display.fontHeight();
+    int fontH = M5.Display.fontHeight();
 
-    display.setCursor(PAD_X, y);
-    display.println(todayDate);  // 1月1日 format
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println(todayDate);  // 1月1日 format
     y += fontH + 16;
 
-    display.drawLine(PAD_X, y, SCREEN_WIDTH - PAD_X, y, TFT_BLACK);
+    M5.Display.drawLine(PAD_X, y, SCREEN_WIDTH - PAD_X, y, TFT_BLACK);
     y += 20;
 
     y = printWrapped(todayTitle, PAD_X, y, contentW);
     y += 16;
 
-    display.setCursor(PAD_X, y);
-    display.println(todayAuthor);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println(todayAuthor);
 
     int totalPages = sentences.size() + 1;
-    display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
-    display.printf("1 / %d", totalPages);
+    M5.Display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
+    M5.Display.printf("1 / %d", totalPages);
 }
 
 void drawCopyContentPage(int idx) {
-    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
 
     // Japanese font for Japanese content
-    display.setFont(&fonts::efontJA_24);
-    display.setTextSize(1.0);
-    display.setTextColor(TFT_BLACK);
+    M5.Display.setFont(&fonts::efontJA_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
 
     int contentW = SCREEN_WIDTH - PAD_X * 2;
     printWrapped(sentences[idx], PAD_X, PAD_Y, contentW);
@@ -1349,25 +1346,25 @@ void drawCopyContentPage(int idx) {
     int totalPages = sentences.size() + 1;
     char info[20];
     sprintf(info, "%d / %d", idx + 2, totalPages);
-    display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
-    display.println(info);
+    M5.Display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
+    M5.Display.println(info);
 }
 
 void drawCopyTab() {
     if (sentences.size() == 0) {
         // No content loaded - Korean UI text
-        display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-        display.setFont(&fonts::efontKR_24);
-        display.setTextSize(1.0);
-        display.setTextColor(TFT_BLACK);
+        M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+        M5.Display.setFont(&fonts::efontKR_24);
+        M5.Display.setTextSize(1.0);
+        M5.Display.setTextColor(TFT_BLACK);
 
         int centerY = CONTENT_HEIGHT / 2;
 
-        display.setCursor(PAD_X, centerY - 40);
-        display.println("오늘의 필사 내용이 없습니다");
+        M5.Display.setCursor(PAD_X, centerY - 40);
+        M5.Display.println("오늘의 필사 내용이 없습니다");
 
-        display.setCursor(PAD_X, centerY + 10);
-        display.println("설정 탭에서 WiFi 파일 전송으로 콘텐츠를 업로드하세요");
+        M5.Display.setCursor(PAD_X, centerY + 10);
+        M5.Display.println("설정 탭에서 WiFi 파일 전송으로 콘텐츠를 업로드하세요");
     } else {
         if (currentPage == -1) {
             drawCopyTitlePage();
@@ -1413,22 +1410,22 @@ void refreshDisplay() {
         // Periodic full clear to reduce ghosting
         refreshCount++;
         if (refreshCount >= FULL_CLEAR_INTERVAL) {
-            display.clearDisplay();
-            display.waitDisplay();
+            M5.Display.clearDisplay();
+            M5.Display.waitDisplay();
             refreshCount = 0;
         }
 
-        display.fillScreen(TFT_WHITE);
+        M5.Display.fillScreen(TFT_WHITE);
         drawCurrentTabContent();
         drawTabBar();
-        display.display();
-        display.waitDisplay();  // Wait for e-ink refresh to complete
+        M5.Display.display();
+        M5.Display.waitDisplay();  // Wait for e-ink refresh to complete
         needsFullRedraw = false;
         needsTabRedraw = false;
     } else if (needsTabRedraw) {
         drawTabBar();
-        display.display();
-        display.waitDisplay();
+        M5.Display.display();
+        M5.Display.waitDisplay();
         needsTabRedraw = false;
     }
 }
@@ -1445,23 +1442,23 @@ void setup() {
     Serial.println("Papers3 JP Learner Starting...");
 
     // Configure display
-    Serial.println("Configuring display...");
-    display.setRotation(1);  // Landscape mode
-    display.setEpdMode(epd_mode_t::epd_quality);
+    Serial.println("Configuring M5.Display...");
+    M5.Display.setRotation(1);  // Landscape mode
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
 
     // E-ink full clear cycle (removes ghosting and vertical lines)
-    Serial.println("Clearing e-ink display...");
-    display.fillScreen(TFT_BLACK);
-    display.display();
-    display.waitDisplay();
+    Serial.println("Clearing e-ink M5.Display...");
+    M5.Display.fillScreen(TFT_BLACK);
+    M5.Display.display();
+    M5.Display.waitDisplay();
 
-    display.fillScreen(TFT_WHITE);
-    display.display();
-    display.waitDisplay();
+    M5.Display.fillScreen(TFT_WHITE);
+    M5.Display.display();
+    M5.Display.waitDisplay();
 
-    display.setTextColor(TFT_BLACK);
-    display.setFont(&fonts::efontKR_24);
-    display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
     Serial.println("Display configured OK");
 
     // Initialize LittleFS (for config and default font)

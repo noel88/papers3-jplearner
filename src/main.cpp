@@ -630,7 +630,7 @@ void refreshDisplay() {
 // ============================================
 void setup() {
     auto cfg = M5.config();
-    cfg.clear_display = true;
+    cfg.clear_display = false;  // We handle clear in refreshDisplay()
     M5.begin(cfg);
 
     Serial.println("Papers3 JP Learner Starting...");
@@ -638,16 +638,6 @@ void setup() {
     // Configure display
     M5.Display.setRotation(1);
     M5.Display.setEpdMode(epd_mode_t::epd_quality);
-
-    // E-ink full clear cycle
-    M5.Display.fillScreen(TFT_BLACK);
-    M5.Display.display();
-    M5.Display.waitDisplay();
-
-    M5.Display.fillScreen(TFT_WHITE);
-    M5.Display.display();
-    M5.Display.waitDisplay();
-
     M5.Display.setTextColor(TFT_BLACK);
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);

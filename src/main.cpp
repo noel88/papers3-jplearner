@@ -10,6 +10,7 @@
 // Screen architecture includes
 #include "screens/ScreenManager.h"
 #include "screens/CopyScreen.h"
+#include "screens/ReadScreen.h"
 #include "screens/SettingsScreen.h"
 #include "screens/PlaceholderScreen.h"
 #include "Config.h"
@@ -60,10 +61,10 @@ Config config;
 // Screen Instances (static allocation)
 // ============================================
 CopyScreen copyScreen;
+ReadScreen readScreen;
 SettingsScreen settingsScreen;
 PlaceholderScreen wordScreen("Word", "단어 학습", "Coming soon - SRS 단어 학습");
 PlaceholderScreen grammarScreen("Grammar", "문형 학습", "Coming soon - N2/N1 문법 패턴");
-PlaceholderScreen readScreen("Read", "읽기", "Coming soon - epub 리더");
 PlaceholderScreen statsScreen("Stats", "학습 통계", "Coming soon - 학습 진행 현황");
 
 // ============================================

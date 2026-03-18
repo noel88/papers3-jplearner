@@ -398,12 +398,16 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
 // SD Card Functions
 // ============================================
 bool initSDCard() {
+    Serial.println("  SPI.begin...");
     SPI.begin(SD_SCK, SD_MISO, SD_MOSI, SD_CS);
+    yield();
 
+    Serial.println("  SD.begin...");
     if (!SD.begin(SD_CS, SPI, 25000000)) {
         Serial.println("SD Card mount failed");
         return false;
     }
+    Serial.println("  SD.begin OK");
 
     uint8_t cardType = SD.cardType();
     if (cardType == CARD_NONE) {
@@ -1291,31 +1295,45 @@ void setup() {
     Serial.println("Papers3 JP Learner Starting...");
 
     // Initialize display
+    Serial.println("Initializing display...");
     display.begin();
+    Serial.println("Display begin OK, waiting...");
     display.waitDisplay();
+    Serial.println("Display ready, configuring...");
     display.setRotation(1);  // Landscape mode
     display.setEpdMode(epd_mode_t::epd_text);
     display.setTextColor(TFT_BLACK);
     display.setFont(&fonts::efontJA_24);
     display.setTextSize(1.4);
+    Serial.println("Display configured OK");
 
     // Initialize LittleFS (for config and default font)
+    Serial.println("Initializing LittleFS...");
     if (!LittleFS.begin(true)) {  // true = format on fail
         Serial.println("LittleFS mount failed");
+    } else {
+        Serial.println("LittleFS mounted OK");
     }
 
     // Load configuration
+    Serial.println("Loading config...");
     loadConfig();
 
     // Initialize SD Card
+    Serial.println("Initializing SD Card...");
+    yield();  // Feed watchdog
     sdCardMounted = initSDCard();
 
     if (!sdCardMounted) {
+        Serial.println("SD card mount failed!");
         showSDCardError("SD card not detected.");
         return;
     }
+    Serial.println("SD Card mounted OK");
 
     // Ensure directory structure
+    Serial.println("Creating directories...");
+    yield();  // Feed watchdog
     if (!ensureDirectories()) {
         showSDCardError("Failed to create directories.");
         return;
@@ -1324,15 +1342,20 @@ void setup() {
     Serial.printf("SD Card Free Space: %llu MB\n", getSDCardFreeSpace() / (1024 * 1024));
 
     // Initialize battery reading
+    Serial.println("Initializing battery...");
     analogReadResolution(12);
     updateBattery();
 
     // Load 필사 content
+    Serial.println("Loading content...");
+    yield();  // Feed watchdog
     loadTodaySentences();
 
     // Draw initial screen with tab bar
+    Serial.println("Drawing initial screen...");
     needsFullRedraw = true;
     refreshDisplay();
+    Serial.println("Setup complete!");
 }
 
 void handleCopyTabTouch(int touchX, int touchY) {

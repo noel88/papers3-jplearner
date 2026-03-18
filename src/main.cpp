@@ -1451,14 +1451,33 @@ void setup() {
     Serial.println("Display ready, configuring...");
     display.setRotation(1);  // Landscape mode
 
-    // E-ink settings for clean display
-    display.setEpdMode(epd_mode_t::epd_quality);  // Better quality, less ghosting
-    display.clearDisplay();  // Full clear to remove ghosting
+    // E-ink full clear cycle (black -> white -> black -> white)
+    // This removes ghosting and vertical lines
+    Serial.println("Clearing e-ink display...");
+    display.setEpdMode(epd_mode_t::epd_quality);
+
+    // Fill black and refresh
+    display.fillScreen(TFT_BLACK);
+    display.display();
+    display.waitDisplay();
+
+    // Fill white and refresh
+    display.fillScreen(TFT_WHITE);
+    display.display();
+    display.waitDisplay();
+
+    // One more cycle for stubborn artifacts
+    display.fillScreen(TFT_BLACK);
+    display.display();
+    display.waitDisplay();
+
+    display.fillScreen(TFT_WHITE);
+    display.display();
     display.waitDisplay();
 
     display.setTextColor(TFT_BLACK);
     display.setFont(&fonts::efontKR_24);
-    display.setTextSize(1.0);  // Normal size, 1.4 might cause issues
+    display.setTextSize(1.0);
     Serial.println("Display configured OK");
 
     // Initialize LittleFS (for config and default font)

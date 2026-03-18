@@ -16,6 +16,7 @@ enum class SettingsState {
     WiFiAP,
     WiFiSTA,
     Display,
+    Font,       // Font selection (TTF from SD card)
     DailyEpub,  // EPUB file selection for Copy screen
     Learning,
     System
@@ -69,6 +70,11 @@ private:
     std::vector<String> _epubFiles;
     int _epubScrollOffset;
 
+    // Font selection
+    std::vector<String> _fontFiles;
+    int _fontScrollOffset;
+    bool _selectingFallback;  // true when selecting fallback font
+
     // ============================================
     // Drawing Methods for Each State
     // ============================================
@@ -77,6 +83,7 @@ private:
     void drawWiFiAPSettings();
     void drawWiFiSTASettings();
     void drawDisplaySettings();
+    void drawFontSettings();
     void drawDailyEpubSettings();
     void drawLearningSettings();
     void drawSystemSettings();
@@ -88,6 +95,7 @@ private:
     bool handleMainMenuTouch(int x, int y);
     bool handleWiFiAPTouch(int x, int y);
     bool handleWiFiSTATouch(int x, int y);
+    bool handleFontSettingsTouch(int x, int y);
     bool handleDailyEpubTouch(int x, int y);
     bool handleBackButton(int y);
 
@@ -96,6 +104,7 @@ private:
     // ============================================
 
     void scanEpubFiles();
+    void scanFontFiles();
 
     // ============================================
     // Constants

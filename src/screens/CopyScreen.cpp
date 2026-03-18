@@ -1,5 +1,6 @@
 #include "screens/CopyScreen.h"
 #include "Config.h"
+#include "FontManager.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
@@ -19,6 +20,27 @@ CopyScreen::CopyScreen()
 
 void CopyScreen::onEnter() {
     BaseScreen::onEnter();
+
+    // Reload font settings
+    FontManager& fm = FontManager::instance();
+    Serial.println("=== CopyScreen::onEnter ===");
+    Serial.printf("CopyScreen: primaryFont='%s', size=%d\n",
+                  config.primaryFont.c_str(), config.fontSizePt);
+    Serial.flush();
+
+    if (config.primaryFont.length() > 0) {
+        Serial.println("CopyScreen: Loading custom font...");
+        Serial.flush();
+        bool loaded = fm.setPrimaryFont(config.primaryFont);
+        Serial.printf("CopyScreen: Font load result=%d, hasCustomFont=%d, err=%d\n",
+                      loaded, fm.hasCustomFont(), fm.getLastError());
+        Serial.flush();
+        fm.setFontSize(config.fontSizePt);
+    } else {
+        Serial.println("CopyScreen: Using built-in font");
+        Serial.flush();
+    }
+
     // Reload content when entering screen
     loadTodayContent();
 }
@@ -300,13 +322,20 @@ void CopyScreen::calculatePages() {
         return;
     }
 
-    M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
+    FontManager& fm = FontManager::instance();
+    int fontH;
 
-    int fontH = M5.Display.fontHeight();
+    if (fm.hasCustomFont()) {
+        fontH = config.fontSizePt + 4;  // Custom font height
+    } else {
+        M5.Display.setFont(&fonts::efontJA_24);
+        M5.Display.setTextSize(1.0);
+        fontH = M5.Display.fontHeight();
+    }
+
     int contentW = SCREEN_WIDTH - PAD_X * 2;
     int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;  // Area above tab bar
-    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - PAD_Y * 2;
+    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - PAD_Y * 3;  // Extra padding
 
     int currentHeight = 0;
     int paraIndex = 0;
@@ -386,13 +415,23 @@ void CopyScreen::drawPageContent() {
         return;
     }
 
-    M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
+    FontManager& fm = FontManager::instance();
+    bool useCustomFont = fm.hasCustomFont();
+
+    int fontH;
+    int contentW = SCREEN_WIDTH - PAD_X * 2;
+
+    if (useCustomFont) {
+        fm.setFontSize(config.fontSizePt);
+        fontH = config.fontSizePt + 4;  // Approximate height
+    } else {
+        M5.Display.setFont(&fonts::efontJA_24);
+        M5.Display.setTextSize(1.0);
+        fontH = M5.Display.fontHeight();
+    }
     M5.Display.setTextColor(TFT_BLACK);
 
-    int fontH = M5.Display.fontHeight();
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-    int maxY = availableHeight - NAV_HEIGHT - PAD_Y;
+    int maxY = availableHeight - NAV_HEIGHT - PAD_Y * 2;  // Extra padding above nav buttons
 
     int startPara = _pageBreaks[_currentPage];
     int endPara = (_currentPage + 1 < _totalPages) ? _pageBreaks[_currentPage + 1] : _paragraphs.size();
@@ -418,7 +457,8 @@ void CopyScreen::drawPageContent() {
                 else if (c >= 0xC0) charLen = 2;
 
                 String sub = para.substring(bytePos, lineEnd + charLen);
-                if (M5.Display.textWidth(sub.c_str()) > contentW) break;
+                int textW = useCustomFont ? fm.getTextWidth(sub) : M5.Display.textWidth(sub.c_str());
+                if (textW > contentW) break;
 
                 lineEnd += charLen;
             }
@@ -426,8 +466,12 @@ void CopyScreen::drawPageContent() {
             if (lineEnd == bytePos) lineEnd += 1;
 
             // Draw this line
-            M5.Display.setCursor(PAD_X, y);
-            M5.Display.print(para.substring(bytePos, lineEnd));
+            if (useCustomFont) {
+                fm.drawString(para.substring(bytePos, lineEnd), PAD_X, y);
+            } else {
+                M5.Display.setCursor(PAD_X, y);
+                M5.Display.print(para.substring(bytePos, lineEnd));
+            }
 
             bytePos = lineEnd;
             y += fontH + LINE_SPACING;

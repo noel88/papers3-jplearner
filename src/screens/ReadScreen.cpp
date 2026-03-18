@@ -1,5 +1,6 @@
 #include "screens/ReadScreen.h"
 #include "Config.h"
+#include "FontManager.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
@@ -20,6 +21,13 @@ ReadScreen::ReadScreen()
 
 void ReadScreen::onEnter() {
     BaseScreen::onEnter();
+
+    // Load custom font settings
+    FontManager& fm = FontManager::instance();
+    if (config.primaryFont.length() > 0) {
+        fm.setPrimaryFont(config.primaryFont);
+        fm.setFontSize(config.fontSizePt);
+    }
 
     if (_mode == Mode::BookSelection) {
         scanBooks();
@@ -373,11 +381,19 @@ void ReadScreen::calculatePages() {
         return;
     }
 
-    M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
-
-    int fontH = M5.Display.fontHeight();
+    FontManager& fm = FontManager::instance();
+    int fontH;
     int contentW = SCREEN_WIDTH - PAD_X * 2;
+
+    if (fm.hasCustomFont()) {
+        // Use custom font size for calculation
+        fontH = config.fontSizePt + 4;  // Approximate line height
+    } else {
+        M5.Display.setFont(&fonts::efontJA_24);
+        M5.Display.setTextSize(1.0);
+        fontH = M5.Display.fontHeight();
+    }
+
     int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
     int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - PAD_Y * 2;
 
@@ -389,7 +405,7 @@ void ReadScreen::calculatePages() {
     while (paraIndex < _paragraphs.size()) {
         const String& para = _paragraphs[paraIndex];
 
-        int paraWidth = M5.Display.textWidth(para.c_str());
+        int paraWidth = fm.hasCustomFont() ? fm.getTextWidth(para) : M5.Display.textWidth(para.c_str());
         int lines = (paraWidth / contentW) + 1;
         int paraHeight = lines * (fontH + lineSpacing) + paraSpacing;
 
@@ -462,11 +478,19 @@ void ReadScreen::drawReadingContent() {
         return;
     }
 
-    M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
-    M5.Display.setTextColor(TFT_BLACK);
+    FontManager& fm = FontManager::instance();
+    bool useCustomFont = fm.hasCustomFont();
 
-    int fontH = M5.Display.fontHeight();
+    int fontH;
+    if (useCustomFont) {
+        fontH = config.fontSizePt + 4;
+    } else {
+        M5.Display.setFont(&fonts::efontJA_24);
+        M5.Display.setTextSize(1.0);
+        M5.Display.setTextColor(TFT_BLACK);
+        fontH = M5.Display.fontHeight();
+    }
+
     int contentW = SCREEN_WIDTH - PAD_X * 2;
     int maxY = availableHeight - NAV_HEIGHT - PAD_Y;
     int lineSpacing = 8;
@@ -494,15 +518,21 @@ void ReadScreen::drawReadingContent() {
                 else if (c >= 0xC0) charLen = 2;
 
                 String sub = para.substring(bytePos, lineEnd + charLen);
-                if (M5.Display.textWidth(sub.c_str()) > contentW) break;
+                int subWidth = useCustomFont ? fm.getTextWidth(sub) : M5.Display.textWidth(sub.c_str());
+                if (subWidth > contentW) break;
 
                 lineEnd += charLen;
             }
 
             if (lineEnd == bytePos) lineEnd += 1;
 
-            M5.Display.setCursor(PAD_X, y);
-            M5.Display.print(para.substring(bytePos, lineEnd));
+            String lineText = para.substring(bytePos, lineEnd);
+            if (useCustomFont) {
+                fm.drawString(lineText, PAD_X, y);
+            } else {
+                M5.Display.setCursor(PAD_X, y);
+                M5.Display.print(lineText);
+            }
 
             bytePos = lineEnd;
             y += fontH + lineSpacing;

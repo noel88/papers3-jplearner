@@ -54,6 +54,11 @@ struct Config {
     String fontSize = "medium";  // small, medium, large
     String startScreen = "copy"; // word, grammar, copy, read
 
+    // Font settings (TTF files from /fonts/)
+    String primaryFont = "";     // Primary font filename (empty = built-in)
+    String fallbackFont = "";    // Fallback font for missing glyphs
+    int fontSizePt = 24;         // Font size in points (16-36)
+
     // Daily reading (Copy screen)
     String dailyEpub = "";  // EPUB filename for daily content (empty = auto-detect)
 

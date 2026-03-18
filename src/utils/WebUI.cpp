@@ -248,11 +248,10 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
                 const file = input.files[i];
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('dir', dir);
 
                 try {
                     const xhr = new XMLHttpRequest();
-                    xhr.open('POST', '/api/upload', true);
+                    xhr.open('POST', '/api/upload?dir=' + encodeURIComponent(dir), true);
 
                     xhr.upload.onprogress = (e) => {
                         if (e.lengthComputable) {

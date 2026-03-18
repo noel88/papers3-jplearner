@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#include "esp_heap_caps.h"
 
 // Screen architecture includes
 #include "screens/ScreenManager.h"
@@ -14,6 +15,7 @@
 #include "screens/SettingsScreen.h"
 #include "screens/PlaceholderScreen.h"
 #include "Config.h"
+#include "FontManager.h"
 #include "WebUI.h"
 
 // ============================================
@@ -188,6 +190,9 @@ bool loadConfig() {
     config.fontSize = doc["display"]["fontSize"] | "medium";
     config.startScreen = doc["display"]["startScreen"] | "copy";
     config.dailyEpub = doc["display"]["dailyEpub"] | "";
+    config.primaryFont = doc["display"]["primaryFont"] | "";
+    config.fallbackFont = doc["display"]["fallbackFont"] | "";
+    config.fontSizePt = doc["display"]["fontSizePt"] | 24;
     config.sleepMinutes = doc["system"]["sleepMinutes"] | 5;
     config.apSsid = doc["wifi"]["ap"]["ssid"] | "Papers3-JP";
     config.apPassword = doc["wifi"]["ap"]["password"] | "12345678";
@@ -208,6 +213,9 @@ bool saveConfig() {
     doc["display"]["fontSize"] = config.fontSize;
     doc["display"]["startScreen"] = config.startScreen;
     doc["display"]["dailyEpub"] = config.dailyEpub;
+    doc["display"]["primaryFont"] = config.primaryFont;
+    doc["display"]["fallbackFont"] = config.fallbackFont;
+    doc["display"]["fontSizePt"] = config.fontSizePt;
     doc["system"]["sleepMinutes"] = config.sleepMinutes;
     doc["wifi"]["ap"]["ssid"] = config.apSsid;
     doc["wifi"]["ap"]["password"] = config.apPassword;
@@ -426,8 +434,8 @@ void setupWebServer() {
         [](AsyncWebServerRequest *request, String filename, size_t index, uint8_t *data, size_t len, bool final) {
             if (index == 0) {
                 String dir = "/books";
-                if (request->hasParam("dir", true)) {
-                    dir = request->getParam("dir", true)->value();
+                if (request->hasParam("dir")) {
+                    dir = request->getParam("dir")->value();
                 }
                 currentUploadPath = dir + "/" + filename;
                 uploadFile = SD.open(currentUploadPath, FILE_WRITE);
@@ -628,12 +636,34 @@ void refreshDisplay() {
 // ============================================
 // Setup
 // ============================================
+// Global font buffer - allocated before M5.begin() to avoid fragmentation
+static uint8_t* g_fontBuffer = nullptr;
+static size_t g_fontBufferSize = 0;
+
 void setup() {
+    // === CRITICAL: Reserve PSRAM for font BEFORE M5.begin() fragments it ===
+    // Allocate 6MB buffer for font (will be used by FontManager later)
+    g_fontBufferSize = 6 * 1024 * 1024;  // 6MB
+    g_fontBuffer = (uint8_t*)heap_caps_malloc(g_fontBufferSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
     auto cfg = M5.config();
     cfg.clear_display = false;  // We handle clear in refreshDisplay()
     M5.begin(cfg);
 
-    Serial.println("Papers3 JP Learner Starting...");
+    // Wait for USB CDC Serial (ESP32-S3)
+    delay(1000);
+    Serial.begin(115200);
+    unsigned long startWait = millis();
+    while (!Serial && (millis() - startWait < 3000)) {
+        delay(100);
+    }
+
+    Serial.println("\n\n=== Papers3 JP Learner Starting ===");
+    Serial.printf("Pre-allocated font buffer: %p (%d bytes)\n", g_fontBuffer, g_fontBufferSize);
+    Serial.printf("PSRAM after M5.begin: Total=%d, Free=%d, Largest=%d\n",
+                  ESP.getPsramSize(), ESP.getFreePsram(),
+                  heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+    Serial.flush();
 
     // Configure display
     M5.Display.setRotation(1);
@@ -659,6 +689,25 @@ void setup() {
     if (!sdCardMounted) {
         showSDCardError("SD card not detected.");
         return;
+    }
+
+    // Initialize FontManager with pre-allocated buffer
+    FontManager& fm = FontManager::instance();
+    if (g_fontBuffer != nullptr) {
+        fm.setExternalBuffer(g_fontBuffer, g_fontBufferSize);
+    }
+    fm.init();
+
+    // Load configured font
+    if (config.primaryFont.length() > 0) {
+        Serial.printf("Loading font: %s\n", config.primaryFont.c_str());
+        Serial.flush();
+        bool loaded = fm.setPrimaryFont(config.primaryFont);
+        Serial.printf("Font load result: %d, hasCustomFont: %d\n", loaded, fm.hasCustomFont());
+        Serial.flush();
+    }
+    if (config.fallbackFont.length() > 0) {
+        fm.setFallbackFont(config.fallbackFont);
     }
 
     yield();

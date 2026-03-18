@@ -10,7 +10,9 @@ SettingsScreen::SettingsScreen()
     : BaseScreen()
     , _state(SettingsState::Main)
     , _wifiModeCallback(nullptr)
-    , _epubScrollOffset(0) {
+    , _epubScrollOffset(0)
+    , _fontScrollOffset(0)
+    , _selectingFallback(false) {
 }
 
 void SettingsScreen::onExit() {
@@ -32,6 +34,9 @@ void SettingsScreen::draw() {
             break;
         case SettingsState::Display:
             drawDisplaySettings();
+            break;
+        case SettingsState::Font:
+            drawFontSettings();
             break;
         case SettingsState::DailyEpub:
             drawDailyEpubSettings();
@@ -58,6 +63,8 @@ bool SettingsScreen::handleTouchStart(int x, int y) {
             return handleWiFiSTATouch(x, y);
         case SettingsState::DailyEpub:
             return handleDailyEpubTouch(x, y);
+        case SettingsState::Font:
+            return handleFontSettingsTouch(x, y);
         case SettingsState::Display:
         case SettingsState::Learning:
         case SettingsState::System:
@@ -93,10 +100,10 @@ void SettingsScreen::drawMainMenu() {
         "WiFi 파일 전송",
         "WiFi 연결 설정",
         "필사 EPUB 선택",
+        "폰트 설정",
         "화면 설정",
         "학습 설정",
-        "시스템 설정",
-        "SD 카드 정보"
+        "시스템 설정"
     };
 
     for (int i = 0; i < 7; i++) {
@@ -119,13 +126,6 @@ void SettingsScreen::drawMainMenu() {
 
         y += ITEM_HEIGHT;
     }
-
-    // SD Card info at bottom
-    M5.Display.setFont(&fonts::Font2);
-    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 30);
-    M5.Display.printf("SD: %llu MB free / %llu MB total",
-        getSDCardFreeSpace() / (1024 * 1024),
-        SD.totalBytes() / (1024 * 1024));
 
     M5.Display.setFont(&fonts::efontKR_24);
 }
@@ -292,21 +292,24 @@ bool SettingsScreen::handleMainMenuTouch(int x, int y) {
                 _state = SettingsState::DailyEpub;
                 requestRedraw();
                 return true;
-            case 3:  // 화면 설정
+            case 3:  // 폰트 설정
+                scanFontFiles();
+                _selectingFallback = false;
+                _state = SettingsState::Font;
+                requestRedraw();
+                return true;
+            case 4:  // 화면 설정
                 _state = SettingsState::Display;
                 requestRedraw();
                 return true;
-            case 4:  // 학습 설정
+            case 5:  // 학습 설정
                 _state = SettingsState::Learning;
                 requestRedraw();
                 return true;
-            case 5:  // 시스템 설정
+            case 6:  // 시스템 설정
                 _state = SettingsState::System;
                 requestRedraw();
                 return true;
-            case 6:  // SD 카드 정보
-                // Just show info, no action needed
-                break;
         }
     }
     return false;
@@ -564,6 +567,332 @@ bool SettingsScreen::handleDailyEpubTouch(int x, int y) {
             _state = SettingsState::Main;
             requestRedraw();
             return true;
+        }
+    }
+
+    return false;
+}
+
+// ============================================
+// Font Selection
+// ============================================
+
+void SettingsScreen::scanFontFiles() {
+    _fontFiles.clear();
+    _fontScrollOffset = 0;
+
+    // Add "내장 폰트" option first
+    _fontFiles.push_back("(내장 폰트)");
+
+    File dir = SD.open(DIR_FONTS);
+    if (!dir) {
+        Serial.println("SettingsScreen: Cannot open fonts directory");
+        return;
+    }
+
+    while (File entry = dir.openNextFile()) {
+        String name = entry.name();
+        bool isFile = !entry.isDirectory();
+        entry.close();
+
+        if (isFile) {
+            String nameLower = name;
+            nameLower.toLowerCase();
+            if (nameLower.endsWith(".ttf")) {
+                _fontFiles.push_back(name);
+                Serial.printf("SettingsScreen: Found font: %s\n", name.c_str());
+            }
+        }
+    }
+    dir.close();
+
+    Serial.printf("SettingsScreen: Total %d font files\n", _fontFiles.size() - 1);
+}
+
+void SettingsScreen::drawFontSettings() {
+    clearContentArea();
+
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Title with back button
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(PAD_X, PAD_Y);
+    if (_selectingFallback) {
+        M5.Display.print("< 대체 폰트 선택");
+    } else {
+        M5.Display.print("< 폰트 설정");
+    }
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    // Current font info
+    int y = 60;
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("Primary: ");
+    M5.Display.print(config.primaryFont.length() > 0 ? config.primaryFont.c_str() : "(built-in)");
+    M5.Display.setCursor(PAD_X + 350, y);
+    M5.Display.printf("Size: %dpt", config.fontSizePt);
+    y += 22;
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.print("Fallback: ");
+    M5.Display.print(config.fallbackFont.length() > 0 ? config.fallbackFont.c_str() : "(none)");
+
+    // Font size buttons
+    int sizeY = y + 8;
+    int sizeBtnW = 50;
+    int sizeBtnH = 35;
+    int sizeX = SCREEN_WIDTH - PAD_X - sizeBtnW * 2 - 80;
+
+    // Minus button
+    M5.Display.drawRect(sizeX, sizeY, sizeBtnW, sizeBtnH, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(sizeX + 18, sizeY + 10);
+    M5.Display.print("-");
+
+    // Size display
+    M5.Display.setCursor(sizeX + sizeBtnW + 10, sizeY + 10);
+    M5.Display.printf("%d", config.fontSizePt);
+
+    // Plus button
+    M5.Display.drawRect(sizeX + sizeBtnW + 50, sizeY, sizeBtnW, sizeBtnH, TFT_BLACK);
+    M5.Display.setCursor(sizeX + sizeBtnW + 68, sizeY + 10);
+    M5.Display.print("+");
+
+    // Mode buttons
+    y += 50;
+    int btnW = 200;
+    int btnH = 45;
+    int gap = 20;
+
+    // Primary font button
+    bool primarySelected = !_selectingFallback;
+    if (primarySelected) {
+        M5.Display.fillRect(PAD_X, y, btnW, btnH, TFT_BLACK);
+        M5.Display.setTextColor(TFT_WHITE);
+    } else {
+        M5.Display.drawRect(PAD_X, y, btnW, btnH, TFT_BLACK);
+        M5.Display.setTextColor(TFT_BLACK);
+    }
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(0.9);
+    M5.Display.setCursor(PAD_X + 20, y + 10);
+    M5.Display.print("기본 폰트");
+
+    // Fallback font button
+    bool fallbackSelected = _selectingFallback;
+    if (fallbackSelected) {
+        M5.Display.fillRect(PAD_X + btnW + gap, y, btnW, btnH, TFT_BLACK);
+        M5.Display.setTextColor(TFT_WHITE);
+    } else {
+        M5.Display.drawRect(PAD_X + btnW + gap, y, btnW, btnH, TFT_BLACK);
+        M5.Display.setTextColor(TFT_BLACK);
+    }
+    M5.Display.setCursor(PAD_X + btnW + gap + 20, y + 10);
+    M5.Display.print("대체 폰트");
+
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextSize(0.8);
+
+    // Font list
+    y += btnH + 15;
+    int listStartY = y;
+    int maxVisible = 4;  // Show 4 fonts
+
+    for (int i = _fontScrollOffset; i < _fontFiles.size() && i < _fontScrollOffset + maxVisible; i++) {
+        bool isSelected = false;
+
+        // Check if this is the selected font
+        String currentFont = _selectingFallback ? config.fallbackFont : config.primaryFont;
+        if (i == 0 && currentFont.length() == 0) {
+            isSelected = true;
+        } else if (i > 0 && currentFont == _fontFiles[i]) {
+            isSelected = true;
+        }
+
+        // Background for alternating rows
+        if ((i - _fontScrollOffset) % 2 == 0) {
+            M5.Display.fillRect(0, y, SCREEN_WIDTH, ITEM_HEIGHT - 1, 0xF7BE);
+        }
+
+        // Selection indicator
+        if (isSelected) {
+            M5.Display.fillRect(0, y, 8, ITEM_HEIGHT - 1, TFT_BLACK);
+        }
+
+        // Font name
+        M5.Display.setFont(&fonts::Font2);
+        M5.Display.setCursor(PAD_X + 10, y + 18);
+        String displayName = _fontFiles[i];
+        // Truncate if too long
+        int maxWidth = SCREEN_WIDTH - PAD_X * 2 - 40;
+        while (M5.Display.textWidth(displayName.c_str()) > maxWidth && displayName.length() > 10) {
+            displayName = displayName.substring(0, displayName.length() - 1);
+        }
+        if (displayName.length() < _fontFiles[i].length()) {
+            displayName += "...";
+        }
+        M5.Display.print(displayName);
+
+        // Bottom border
+        M5.Display.drawLine(PAD_X, y + ITEM_HEIGHT - 1,
+                           SCREEN_WIDTH - PAD_X, y + ITEM_HEIGHT - 1, 0xDEDB);
+
+        y += ITEM_HEIGHT;
+    }
+
+    // Navigation buttons
+    bool needsPaging = _fontFiles.size() > maxVisible;
+    if (needsPaging) {
+        M5.Display.setFont(&fonts::efontKR_24);
+        M5.Display.setTextSize(1.0);
+
+        int btnY = y + 10;
+        int navBtnW = 150;
+        int navBtnH = 45;
+
+        // Previous
+        if (_fontScrollOffset > 0) {
+            M5.Display.fillRect(PAD_X, btnY, navBtnW, navBtnH, TFT_BLACK);
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setCursor(PAD_X + 35, btnY + 10);
+            M5.Display.print("< 이전");
+        }
+
+        // Next
+        int nextBtnX = SCREEN_WIDTH - PAD_X - navBtnW;
+        if (_fontScrollOffset + maxVisible < _fontFiles.size()) {
+            M5.Display.fillRect(nextBtnX, btnY, navBtnW, navBtnH, TFT_BLACK);
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setCursor(nextBtnX + 35, btnY + 10);
+            M5.Display.print("다음 >");
+        }
+
+        M5.Display.setTextColor(TFT_BLACK);
+    }
+
+    // Help text
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setTextColor(0x8410);
+    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 25);
+    M5.Display.print("Place TTF files in /fonts/ folder on SD card");
+    M5.Display.setTextColor(TFT_BLACK);
+}
+
+bool SettingsScreen::handleFontSettingsTouch(int x, int y) {
+    // Back button (top area)
+    if (y < BACK_BUTTON_HEIGHT) {
+        _state = SettingsState::Main;
+        requestRedraw();
+        return true;
+    }
+
+    // Font size buttons (at y=90, right side)
+    int sizeY = 90;
+    int sizeBtnW = 50;
+    int sizeBtnH = 35;
+    int sizeX = SCREEN_WIDTH - PAD_X - sizeBtnW * 2 - 80;
+
+    if (y >= sizeY && y <= sizeY + sizeBtnH) {
+        // Minus button
+        if (x >= sizeX && x <= sizeX + sizeBtnW) {
+            if (config.fontSizePt > 16) {
+                config.fontSizePt -= 2;
+                saveConfig();
+                requestRedraw();
+            }
+            return true;
+        }
+        // Plus button
+        if (x >= sizeX + sizeBtnW + 50 && x <= sizeX + sizeBtnW * 2 + 50) {
+            if (config.fontSizePt < 36) {
+                config.fontSizePt += 2;
+                saveConfig();
+                requestRedraw();
+            }
+            return true;
+        }
+    }
+
+    // Mode toggle buttons (Primary / Fallback)
+    int modeY = 132;  // After size buttons
+    int btnW = 200;
+    int btnH = 45;
+    int gap = 20;
+
+    if (y >= modeY && y <= modeY + btnH) {
+        if (x >= PAD_X && x <= PAD_X + btnW) {
+            // Primary font button
+            _selectingFallback = false;
+            requestRedraw();
+            return true;
+        } else if (x >= PAD_X + btnW + gap && x <= PAD_X + btnW * 2 + gap) {
+            // Fallback font button
+            _selectingFallback = true;
+            requestRedraw();
+            return true;
+        }
+    }
+
+    // Font list
+    int listStartY = modeY + btnH + 15;  // 132 + 45 + 15 = 192
+    int maxVisible = 4;
+    int listEndY = listStartY + maxVisible * ITEM_HEIGHT;
+
+    // Navigation buttons
+    bool needsPaging = _fontFiles.size() > maxVisible;
+    if (needsPaging) {
+        int navBtnY = listEndY + 10;
+        int navBtnW = 150;
+        int navBtnH = 45;
+
+        if (y >= navBtnY && y <= navBtnY + navBtnH) {
+            // Previous
+            if (x >= PAD_X && x <= PAD_X + navBtnW && _fontScrollOffset > 0) {
+                _fontScrollOffset -= maxVisible;
+                if (_fontScrollOffset < 0) _fontScrollOffset = 0;
+                requestRedraw();
+                return true;
+            }
+
+            // Next
+            int nextBtnX = SCREEN_WIDTH - PAD_X - navBtnW;
+            if (x >= nextBtnX && x <= nextBtnX + navBtnW &&
+                _fontScrollOffset + maxVisible < _fontFiles.size()) {
+                _fontScrollOffset += maxVisible;
+                requestRedraw();
+                return true;
+            }
+        }
+    }
+
+    // Font selection
+    if (y >= listStartY && y < listEndY) {
+        int visibleCount = min((int)_fontFiles.size() - _fontScrollOffset, maxVisible);
+        if (y < listStartY + visibleCount * ITEM_HEIGHT) {
+            int touchedIndex = (y - listStartY) / ITEM_HEIGHT + _fontScrollOffset;
+
+            if (touchedIndex >= 0 && touchedIndex < _fontFiles.size()) {
+                String selectedFont = (touchedIndex == 0) ? "" : _fontFiles[touchedIndex];
+
+                if (_selectingFallback) {
+                    config.fallbackFont = selectedFont;
+                    Serial.printf("SettingsScreen: Fallback font: %s\n",
+                                  selectedFont.length() > 0 ? selectedFont.c_str() : "(none)");
+                } else {
+                    config.primaryFont = selectedFont;
+                    Serial.printf("SettingsScreen: Primary font set to: '%s'\n",
+                                  selectedFont.length() > 0 ? selectedFont.c_str() : "(built-in)");
+                }
+                Serial.flush();
+
+                // Save config
+                saveConfig();
+                Serial.println("SettingsScreen: Config saved");
+                Serial.flush();
+                requestRedraw();
+                return true;
+            }
         }
     }
 

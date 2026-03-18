@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
+#include "CopyScreen.h"
 
 // ============================================
 // Hardware Configuration
@@ -113,12 +114,8 @@ TabIndex currentTab = TAB_COPY;  // Start with 필사 (transcription)
 bool needsFullRedraw = true;
 bool needsTabRedraw = false;
 
-// 필사 (Copy/Transcription) state
-std::vector<String> sentences;
-String todayTitle = "";
-String todayAuthor = "";
-String todayDate = "";
-int currentPage = -1;
+// 필사 (Copy/Transcription) screen
+CopyScreen copyScreen;
 
 // WiFi state
 String currentUploadPath = "";
@@ -979,55 +976,6 @@ void stopWiFiMode() {
 }
 
 // ============================================
-// Content Loading (Temporary - will be replaced with epub)
-// ============================================
-bool loadTodaySentences() {
-    // Get date from M5Unified RTC
-    auto dt = M5.Rtc.getDateTime();
-
-    char target[8];
-    sprintf(target, "#%02d%02d", dt.date.month, dt.date.date);
-    todayDate = String(dt.date.month) + "月" + String(dt.date.date) + "日";
-
-    // Try SD card first, then LittleFS as fallback
-    File f;
-    String filePath = String(DIR_BOOKS) + "/365.txt";
-
-    if (SD.exists(filePath.c_str())) {
-        f = SD.open(filePath.c_str(), FILE_READ);
-    } else if (LittleFS.exists("/365.txt")) {
-        f = LittleFS.open("/365.txt", "r");
-    }
-
-    if (!f) return false;
-
-    bool found = false;
-    sentences.clear();
-
-    while (f.available()) {
-        String line = f.readStringUntil('\n');
-        line.trim();
-        if (line.startsWith("#")) {
-            if (found) break;
-            if (line == String(target)) found = true;
-            continue;
-        }
-        if (!found) continue;
-        if (line.startsWith("TITLE:")) {
-            todayTitle = line.substring(6);
-            todayTitle.trim();
-        } else if (line.startsWith("AUTHOR:")) {
-            todayAuthor = line.substring(7);
-            todayAuthor.trim();
-        } else if (line.length() > 0) {
-            sentences.push_back(line);
-        }
-    }
-    f.close();
-    return sentences.size() > 0;
-}
-
-// ============================================
 // Tab Content Drawing Functions
 // ============================================
 void drawPlaceholderContent(const char* tabName, const char* description) {
@@ -1265,114 +1213,6 @@ void drawSettingsTab() {
 // ============================================
 // Display Functions
 // ============================================
-int printWrapped(const String& text, int x, int y, int maxW) {
-    int fontH = M5.Display.fontHeight();
-    int bytePos = 0;
-    int byteLen = text.length();
-
-    while (bytePos < byteLen) {
-        int lineEnd = bytePos;
-        int lineWidth = 0;
-
-        while (lineEnd < byteLen) {
-            uint8_t c = (uint8_t)text[lineEnd];
-            int charBytes = 1;
-            if (c >= 0xF0) charBytes = 4;
-            else if (c >= 0xE0) charBytes = 3;
-            else if (c >= 0xC0) charBytes = 2;
-
-            String ch = text.substring(lineEnd, lineEnd + charBytes);
-            int chW = M5.Display.textWidth(ch.c_str());
-
-            if (lineWidth + chW > maxW) break;
-            lineWidth += chW;
-            lineEnd += charBytes;
-        }
-
-        if (lineEnd == bytePos) lineEnd += 1;
-
-        M5.Display.setCursor(x, y);
-        M5.Display.print(text.substring(bytePos, lineEnd));
-        bytePos = lineEnd;
-
-        if (bytePos < byteLen) {
-            y += fontH + LINE_SPACING;
-        }
-    }
-    return y + fontH;
-}
-
-void drawCopyTitlePage() {
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-    int y = PAD_Y;
-
-    // Japanese font for Japanese content
-    M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
-    M5.Display.setTextColor(TFT_BLACK);
-
-    int fontH = M5.Display.fontHeight();
-
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.println(todayDate);  // 1月1日 format
-    y += fontH + 16;
-
-    M5.Display.drawLine(PAD_X, y, SCREEN_WIDTH - PAD_X, y, TFT_BLACK);
-    y += 20;
-
-    y = printWrapped(todayTitle, PAD_X, y, contentW);
-    y += 16;
-
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.println(todayAuthor);
-
-    int totalPages = sentences.size() + 1;
-    M5.Display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
-    M5.Display.printf("1 / %d", totalPages);
-}
-
-void drawCopyContentPage(int idx) {
-    M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-
-    // Japanese font for Japanese content
-    M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
-    M5.Display.setTextColor(TFT_BLACK);
-
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-    printWrapped(sentences[idx], PAD_X, PAD_Y, contentW);
-
-    int totalPages = sentences.size() + 1;
-    char info[20];
-    sprintf(info, "%d / %d", idx + 2, totalPages);
-    M5.Display.setCursor(SCREEN_WIDTH - 120, CONTENT_HEIGHT - PAD_Y - 20);
-    M5.Display.println(info);
-}
-
-void drawCopyTab() {
-    if (sentences.size() == 0) {
-        // No content loaded - Korean UI text
-        M5.Display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
-        M5.Display.setFont(&fonts::efontKR_24);
-        M5.Display.setTextSize(1.0);
-        M5.Display.setTextColor(TFT_BLACK);
-
-        int centerY = CONTENT_HEIGHT / 2;
-
-        M5.Display.setCursor(PAD_X, centerY - 40);
-        M5.Display.println("오늘의 필사 내용이 없습니다");
-
-        M5.Display.setCursor(PAD_X, centerY + 10);
-        M5.Display.println("설정 탭에서 WiFi 파일 전송으로 콘텐츠를 업로드하세요");
-    } else {
-        if (currentPage == -1) {
-            drawCopyTitlePage();
-        } else {
-            drawCopyContentPage(currentPage);
-        }
-    }
-}
 
 void drawReadTab() {
     drawPlaceholderContent("읽기", "Coming soon - epub 리더");
@@ -1387,7 +1227,7 @@ void drawCurrentTabContent() {
             drawGrammarTab();
             break;
         case TAB_COPY:
-            drawCopyTab();
+            copyScreen.draw();
             break;
         case TAB_READ:
             drawReadTab();
@@ -1525,7 +1365,7 @@ void setup() {
     // Load 필사 content
     Serial.println("Loading content...");
     yield();  // Feed watchdog
-    loadTodaySentences();
+    copyScreen.loadTodayContent();
 
     // Draw initial screen with tab bar
     Serial.println("Drawing initial screen...");
@@ -1535,16 +1375,8 @@ void setup() {
 }
 
 void handleCopyTabTouch(int touchX, int touchY) {
-    // Page navigation for 필사 tab
-    if (sentences.size() > 0) {
-        if (currentPage == -1) {
-            currentPage = 0;
-        } else {
-            currentPage++;
-            if (currentPage >= (int)sentences.size()) {
-                currentPage = -1;
-            }
-        }
+    // Delegate to CopyScreen class (scroll-based navigation)
+    if (copyScreen.handleTouch(touchX, touchY)) {
         needsFullRedraw = true;
     }
 }
@@ -1656,7 +1488,7 @@ void loop() {
             stopWiFiMode();
 
             // Reload content and return to tab view
-            loadTodaySentences();
+            copyScreen.loadTodayContent();
             needsFullRedraw = true;
         }
         delay(50);

@@ -6,6 +6,7 @@
 #include <I2C_BM8563.h>
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <ArduinoJson.h>
 
 // ============================================
 // Hardware Configuration
@@ -63,9 +64,48 @@ const char* DIR_DICT = "/dict";
 const char* DIR_FONTS = "/fonts";
 const char* DIR_USERDATA = "/userdata";
 
-// WiFi AP Settings
-const char* AP_SSID = "Papers3-JP";
-const char* AP_PASS = "12345678";
+// Config file path (stored in internal LittleFS)
+const char* CONFIG_PATH = "/config.json";
+
+// ============================================
+// Configuration Structure
+// ============================================
+struct Config {
+    // Language
+    String language = "ko";
+
+    // Learning settings
+    int newCardsPerDay = 20;
+    int reviewLimit = -1;  // -1 = unlimited
+
+    // Display settings
+    String fontSize = "medium";  // small, medium, large
+    String startScreen = "copy"; // word, grammar, copy, read
+
+    // System settings
+    int sleepMinutes = 5;
+
+    // WiFi AP settings (for file transfer)
+    String apSsid = "Papers3-JP";
+    String apPassword = "12345678";
+
+    // WiFi Station settings (for external connection)
+    String staSsid = "";
+    String staPassword = "";
+    bool autoConnect = false;
+} config;
+
+// Settings menu state
+enum SettingsMenuState {
+    SETTINGS_MAIN,
+    SETTINGS_WIFI_AP,
+    SETTINGS_WIFI_STA,
+    SETTINGS_DISPLAY,
+    SETTINGS_LEARNING,
+    SETTINGS_SYSTEM
+};
+
+SettingsMenuState settingsState = SETTINGS_MAIN;
 
 // ============================================
 // State
@@ -425,6 +465,96 @@ uint64_t getSDCardFreeSpace() {
 }
 
 // ============================================
+// Configuration Functions
+// ============================================
+bool loadConfig() {
+    if (!LittleFS.exists(CONFIG_PATH)) {
+        Serial.println("Config file not found, using defaults");
+        return false;
+    }
+
+    File f = LittleFS.open(CONFIG_PATH, "r");
+    if (!f) {
+        Serial.println("Failed to open config file");
+        return false;
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, f);
+    f.close();
+
+    if (error) {
+        Serial.printf("Config parse error: %s\n", error.c_str());
+        return false;
+    }
+
+    // Language
+    config.language = doc["language"] | "ko";
+
+    // Learning
+    config.newCardsPerDay = doc["learning"]["newCardsPerDay"] | 20;
+    config.reviewLimit = doc["learning"]["reviewLimit"] | -1;
+
+    // Display
+    config.fontSize = doc["display"]["fontSize"] | "medium";
+    config.startScreen = doc["display"]["startScreen"] | "copy";
+
+    // System
+    config.sleepMinutes = doc["system"]["sleepMinutes"] | 5;
+
+    // WiFi AP
+    config.apSsid = doc["wifi"]["ap"]["ssid"] | "Papers3-JP";
+    config.apPassword = doc["wifi"]["ap"]["password"] | "12345678";
+
+    // WiFi Station
+    config.staSsid = doc["wifi"]["station"]["ssid"] | "";
+    config.staPassword = doc["wifi"]["station"]["password"] | "";
+    config.autoConnect = doc["wifi"]["station"]["autoConnect"] | false;
+
+    Serial.println("Config loaded successfully");
+    return true;
+}
+
+bool saveConfig() {
+    JsonDocument doc;
+
+    // Language
+    doc["language"] = config.language;
+
+    // Learning
+    doc["learning"]["newCardsPerDay"] = config.newCardsPerDay;
+    doc["learning"]["reviewLimit"] = config.reviewLimit;
+
+    // Display
+    doc["display"]["fontSize"] = config.fontSize;
+    doc["display"]["startScreen"] = config.startScreen;
+
+    // System
+    doc["system"]["sleepMinutes"] = config.sleepMinutes;
+
+    // WiFi AP
+    doc["wifi"]["ap"]["ssid"] = config.apSsid;
+    doc["wifi"]["ap"]["password"] = config.apPassword;
+
+    // WiFi Station
+    doc["wifi"]["station"]["ssid"] = config.staSsid;
+    doc["wifi"]["station"]["password"] = config.staPassword;
+    doc["wifi"]["station"]["autoConnect"] = config.autoConnect;
+
+    File f = LittleFS.open(CONFIG_PATH, "w");
+    if (!f) {
+        Serial.println("Failed to create config file");
+        return false;
+    }
+
+    serializeJsonPretty(doc, f);
+    f.close();
+
+    Serial.println("Config saved successfully");
+    return true;
+}
+
+// ============================================
 // Battery Functions
 // ============================================
 int readBatteryPercent() {
@@ -543,6 +673,11 @@ int handleTabTouch(int touchX, int touchY) {
 
 void switchTab(TabIndex newTab) {
     if (newTab != currentTab) {
+        // Reset settings menu state when leaving settings tab
+        if (currentTab == TAB_SETTINGS) {
+            settingsState = SETTINGS_MAIN;
+        }
+
         currentTab = newTab;
         needsFullRedraw = true;
         Serial.printf("Switched to tab: %s\n", TAB_LABELS[newTab]);
@@ -647,9 +782,9 @@ void setupWebServer() {
 void startWiFiMode() {
     wifiMode = true;
 
-    // Start AP mode
+    // Start AP mode using config values
     WiFi.mode(WIFI_AP);
-    WiFi.softAP(AP_SSID, AP_PASS);
+    WiFi.softAP(config.apSsid.c_str(), config.apPassword.c_str());
 
     IPAddress IP = WiFi.softAPIP();
     Serial.print("AP IP address: ");
@@ -674,10 +809,10 @@ void startWiFiMode() {
 
     display.setTextSize(1.4);
     display.setCursor(PAD_X + 40, y);
-    display.printf("SSID: %s", AP_SSID);
+    display.printf("SSID: %s", config.apSsid.c_str());
     y += 35;
     display.setCursor(PAD_X + 40, y);
-    display.printf("Pass: %s", AP_PASS);
+    display.printf("Pass: %s", config.apPassword.c_str());
     y += 50;
 
     display.setTextSize(1.2);
@@ -793,8 +928,206 @@ void drawStatsTab() {
     drawPlaceholderContent("학습 통계", "Coming soon - 학습 진행 현황");
 }
 
+// Settings menu item structure
+struct SettingsMenuItem {
+    const char* label;
+    const char* value;
+    int y;
+    int height;
+};
+
+const int SETTINGS_ITEM_HEIGHT = 55;
+const int SETTINGS_ITEMS_START_Y = 60;
+
+void drawSettingsMainMenu() {
+    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    display.setFont(&fonts::efontJA_24);
+    display.setTextColor(TFT_BLACK);
+
+    // Title
+    display.setTextSize(1.3);
+    display.setCursor(PAD_X, PAD_Y);
+    display.print("설정");
+
+    // Divider
+    display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    display.setTextSize(1.0);
+    int y = SETTINGS_ITEMS_START_Y;
+
+    // Menu items
+    const char* menuItems[] = {
+        "WiFi 파일 전송",
+        "WiFi 연결 설정",
+        "화면 설정",
+        "학습 설정",
+        "시스템 설정",
+        "SD 카드 정보"
+    };
+
+    for (int i = 0; i < 6; i++) {
+        // Draw item background (alternating)
+        if (i % 2 == 0) {
+            display.fillRect(0, y, SCREEN_WIDTH, SETTINGS_ITEM_HEIGHT - 1, 0xF7BE);  // Light gray
+        }
+
+        // Draw item label
+        display.setCursor(PAD_X, y + 15);
+        display.print(menuItems[i]);
+
+        // Draw arrow
+        display.setCursor(SCREEN_WIDTH - 60, y + 15);
+        display.print(">");
+
+        // Draw bottom border
+        display.drawLine(PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, SCREEN_WIDTH - PAD_X, y + SETTINGS_ITEM_HEIGHT - 1, 0xDEDB);
+
+        y += SETTINGS_ITEM_HEIGHT;
+    }
+
+    // SD Card info at bottom
+    display.setFont(&fonts::Font2);
+    display.setCursor(PAD_X, CONTENT_HEIGHT - 30);
+    display.printf("SD: %llu MB free / %llu MB total",
+        getSDCardFreeSpace() / (1024 * 1024),
+        SD.totalBytes() / (1024 * 1024));
+
+    display.setFont(&fonts::efontJA_24);
+}
+
+void drawWiFiAPSettings() {
+    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    display.setFont(&fonts::efontJA_24);
+    display.setTextColor(TFT_BLACK);
+
+    // Title with back button
+    display.setTextSize(1.3);
+    display.setCursor(PAD_X, PAD_Y);
+    display.print("< WiFi 파일 전송");
+    display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    display.setTextSize(1.0);
+    int y = SETTINGS_ITEMS_START_Y + 10;
+
+    // Current AP settings
+    display.setCursor(PAD_X, y);
+    display.print("현재 설정:");
+    y += 40;
+
+    display.setCursor(PAD_X + 20, y);
+    display.printf("SSID: %s", config.apSsid.c_str());
+    y += 35;
+
+    display.setCursor(PAD_X + 20, y);
+    display.printf("비밀번호: %s", config.apPassword.c_str());
+    y += 50;
+
+    // Start button
+    int btnY = y + 20;
+    int btnW = 300;
+    int btnH = 60;
+    int btnX = (SCREEN_WIDTH - btnW) / 2;
+
+    display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    display.setTextColor(TFT_WHITE);
+    display.setTextSize(1.2);
+
+    int textW = display.textWidth("파일 전송 시작");
+    display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
+    display.print("파일 전송 시작");
+
+    display.setTextColor(TFT_BLACK);
+    display.setTextSize(1.0);
+
+    // Instructions
+    y = btnY + btnH + 30;
+    display.setFont(&fonts::Font2);
+    display.setCursor(PAD_X, y);
+    display.print("1. Start file transfer");
+    y += 25;
+    display.setCursor(PAD_X, y);
+    display.printf("2. Connect to WiFi '%s'", config.apSsid.c_str());
+    y += 25;
+    display.setCursor(PAD_X, y);
+    display.print("3. Open http://192.168.4.1 in browser");
+
+    display.setFont(&fonts::efontJA_24);
+}
+
+void drawWiFiSTASettings() {
+    display.fillRect(0, 0, SCREEN_WIDTH, CONTENT_HEIGHT, TFT_WHITE);
+    display.setFont(&fonts::efontJA_24);
+    display.setTextColor(TFT_BLACK);
+
+    // Title with back button
+    display.setTextSize(1.3);
+    display.setCursor(PAD_X, PAD_Y);
+    display.print("< WiFi 연결 설정");
+    display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
+    display.setTextSize(1.0);
+    int y = SETTINGS_ITEMS_START_Y + 10;
+
+    // Current Station settings
+    display.setCursor(PAD_X, y);
+    display.print("외부 WiFi 연결:");
+    y += 40;
+
+    if (config.staSsid.length() > 0) {
+        display.setCursor(PAD_X + 20, y);
+        display.printf("SSID: %s", config.staSsid.c_str());
+        y += 35;
+
+        display.setCursor(PAD_X + 20, y);
+        display.print("상태: 설정됨");
+    } else {
+        display.setCursor(PAD_X + 20, y);
+        display.print("설정된 네트워크 없음");
+    }
+    y += 50;
+
+    // Scan button
+    int btnY = y + 20;
+    int btnW = 250;
+    int btnH = 50;
+    int btnX = (SCREEN_WIDTH - btnW) / 2;
+
+    display.drawRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    display.setTextSize(1.1);
+
+    int textW = display.textWidth("WiFi 스캔");
+    display.setCursor(btnX + (btnW - textW) / 2, btnY + 12);
+    display.print("WiFi 스캔");
+
+    display.setTextSize(1.0);
+
+    // Note
+    y = btnY + btnH + 40;
+    display.setFont(&fonts::Font2);
+    display.setCursor(PAD_X, y);
+    display.print("Note: WiFi scan feature coming soon.");
+    y += 25;
+    display.setCursor(PAD_X, y);
+    display.print("Currently use AP mode for file transfer.");
+
+    display.setFont(&fonts::efontJA_24);
+}
+
 void drawSettingsTab() {
-    drawPlaceholderContent("설정", "Touch LEFT: WiFi 파일 전송\nTouch RIGHT: Coming soon");
+    switch (settingsState) {
+        case SETTINGS_MAIN:
+            drawSettingsMainMenu();
+            break;
+        case SETTINGS_WIFI_AP:
+            drawWiFiAPSettings();
+            break;
+        case SETTINGS_WIFI_STA:
+            drawWiFiSTASettings();
+            break;
+        default:
+            drawSettingsMainMenu();
+            break;
+    }
 }
 
 // ============================================
@@ -967,9 +1300,12 @@ void setup() {
     display.setTextSize(1.4);
 
     // Initialize LittleFS (for config and default font)
-    if (!LittleFS.begin()) {
+    if (!LittleFS.begin(true)) {  // true = format on fail
         Serial.println("LittleFS mount failed");
     }
+
+    // Load configuration
+    loadConfig();
 
     // Initialize SD Card
     sdCardMounted = initSDCard();
@@ -1015,11 +1351,75 @@ void handleCopyTabTouch(int touchX, int touchY) {
 }
 
 void handleSettingsTabTouch(int touchX, int touchY) {
-    // Left side - WiFi mode
-    if (touchX < SCREEN_WIDTH / 2) {
-        startWiFiMode();
+    switch (settingsState) {
+        case SETTINGS_MAIN: {
+            // Check which menu item was touched
+            if (touchY >= SETTINGS_ITEMS_START_Y && touchY < SETTINGS_ITEMS_START_Y + 6 * SETTINGS_ITEM_HEIGHT) {
+                int itemIndex = (touchY - SETTINGS_ITEMS_START_Y) / SETTINGS_ITEM_HEIGHT;
+                Serial.printf("Settings item touched: %d\n", itemIndex);
+
+                switch (itemIndex) {
+                    case 0:  // WiFi 파일 전송
+                        settingsState = SETTINGS_WIFI_AP;
+                        needsFullRedraw = true;
+                        break;
+                    case 1:  // WiFi 연결 설정
+                        settingsState = SETTINGS_WIFI_STA;
+                        needsFullRedraw = true;
+                        break;
+                    case 2:  // 화면 설정
+                        // TODO: Implement display settings
+                        break;
+                    case 3:  // 학습 설정
+                        // TODO: Implement learning settings
+                        break;
+                    case 4:  // 시스템 설정
+                        // TODO: Implement system settings
+                        break;
+                    case 5:  // SD 카드 정보
+                        // Just show info, no action needed
+                        break;
+                }
+            }
+            break;
+        }
+
+        case SETTINGS_WIFI_AP: {
+            // Back button (top area)
+            if (touchY < 50) {
+                settingsState = SETTINGS_MAIN;
+                needsFullRedraw = true;
+                break;
+            }
+
+            // Start file transfer button
+            int btnY = SETTINGS_ITEMS_START_Y + 10 + 40 + 35 + 50 + 20;  // Calculate button Y
+            int btnH = 60;
+            int btnW = 300;
+            int btnX = (SCREEN_WIDTH - btnW) / 2;
+
+            if (touchY >= btnY && touchY <= btnY + btnH &&
+                touchX >= btnX && touchX <= btnX + btnW) {
+                startWiFiMode();
+            }
+            break;
+        }
+
+        case SETTINGS_WIFI_STA: {
+            // Back button (top area)
+            if (touchY < 50) {
+                settingsState = SETTINGS_MAIN;
+                needsFullRedraw = true;
+            }
+            // WiFi scan button - TODO: implement
+            break;
+        }
+
+        default:
+            settingsState = SETTINGS_MAIN;
+            needsFullRedraw = true;
+            break;
     }
-    // Right side - future settings menu
 }
 
 void handleContentTouch(int touchX, int touchY) {

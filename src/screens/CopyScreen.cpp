@@ -6,6 +6,9 @@
 // Line spacing constant
 constexpr int LINE_SPACING = 16;
 
+// EPUB file pattern for 365-day books
+static const char* EPUB_365_PATTERN = "365";
+
 CopyScreen::CopyScreen()
     : ScrollableScreen() {
 }
@@ -30,11 +33,165 @@ bool CopyScreen::loadTodayContent() {
     auto dt = M5.Rtc.getDateTime();
     int dayOfYear = getDayOfYear(dt.date.month, dt.date.date);
 
+    _date = String(dt.date.month) + "月" + String(dt.date.date) + "日";
+    _paragraphs.clear();
+    _title = "";
+    _author = "";
+
+    Serial.printf("CopyScreen: Loading day %d\n", dayOfYear);
+
+    // Try EPUB first, then fall back to text file
+    bool loaded = loadFromEpub(dayOfYear);
+    if (!loaded) {
+        loaded = loadFromTextFile(dayOfYear);
+    }
+
+    if (loaded) {
+        // Reset scroll on new content
+        resetScroll();
+        _contentHeight = calculateContentHeight();
+
+        Serial.printf("CopyScreen: Loaded '%s' by %s, %d paragraphs, height=%d\n",
+                      _title.c_str(), _author.c_str(), _paragraphs.size(), _contentHeight);
+    }
+
+    requestRedraw();
+    return loaded;
+}
+
+String CopyScreen::findEpubFile() {
+    // Look for EPUB files containing "365" in the filename
+    File dir = SD.open(DIR_BOOKS);
+    if (!dir) {
+        Serial.println("CopyScreen: Cannot open books directory");
+        return "";
+    }
+
+    String foundPath = "";
+    while (File entry = dir.openNextFile()) {
+        String name = entry.name();
+        entry.close();
+
+        // Check if it's an EPUB file with "365" in the name
+        if (name.endsWith(".epub") && name.indexOf(EPUB_365_PATTERN) >= 0) {
+            foundPath = String(DIR_BOOKS) + "/" + name;
+            Serial.printf("CopyScreen: Found 365 EPUB: %s\n", foundPath.c_str());
+            break;
+        }
+    }
+    dir.close();
+
+    return foundPath;
+}
+
+bool CopyScreen::loadFromEpub(int dayOfYear) {
+    // Find EPUB file if not already opened
+    if (!_epubParser.isOpen()) {
+        _epubPath = findEpubFile();
+        if (_epubPath.length() == 0) {
+            Serial.println("CopyScreen: No 365 EPUB found");
+            return false;
+        }
+
+        if (!_epubParser.open(_epubPath)) {
+            Serial.println("CopyScreen: Failed to open EPUB");
+            return false;
+        }
+
+        // Get metadata
+        const EpubMetadata& meta = _epubParser.getMetadata();
+        Serial.printf("CopyScreen: EPUB opened - %s by %s, %d chapters\n",
+                      meta.title.c_str(), meta.author.c_str(), _epubParser.getChapterCount());
+    }
+
+    // Chapter index = dayOfYear - 1 (0-indexed)
+    // Some books may have intro chapters, so we might need to adjust
+    int chapterIndex = dayOfYear - 1;
+
+    // Bounds check
+    if (chapterIndex < 0 || chapterIndex >= _epubParser.getChapterCount()) {
+        Serial.printf("CopyScreen: Chapter %d out of range (total: %d)\n",
+                      chapterIndex, _epubParser.getChapterCount());
+        return false;
+    }
+
+    // Get chapter text
+    String chapterText = _epubParser.getChapterText(chapterIndex);
+    if (chapterText.length() == 0) {
+        Serial.println("CopyScreen: Empty chapter content");
+        return false;
+    }
+
+    // Parse the chapter content
+    parseChapterContent(chapterText);
+
+    // If no title extracted from content, use chapter info
+    if (_title.length() == 0) {
+        const auto& chapters = _epubParser.getChapters();
+        _title = chapters[chapterIndex].title;
+    }
+
+    // Use book author if not extracted from chapter
+    if (_author.length() == 0) {
+        _author = _epubParser.getMetadata().author;
+    }
+
+    return _paragraphs.size() > 0;
+}
+
+void CopyScreen::parseChapterContent(const String& text) {
+    // Split text into paragraphs by newlines
+    int start = 0;
+    int len = text.length();
+
+    // Try to extract title from first line (often formatted differently)
+    int firstNewline = text.indexOf('\n');
+    if (firstNewline > 0 && firstNewline < 100) {
+        String firstLine = text.substring(0, firstNewline);
+        firstLine.trim();
+
+        // If first line is short, it might be a title
+        if (firstLine.length() > 0 && firstLine.length() < 50) {
+            _title = firstLine;
+            start = firstNewline + 1;
+        }
+    }
+
+    // Parse remaining content into paragraphs
+    while (start < len) {
+        int end = text.indexOf('\n', start);
+        if (end < 0) end = len;
+
+        String para = text.substring(start, end);
+        para.trim();
+
+        if (para.length() > 0) {
+            // Check for author line (often starts with special characters)
+            if (_author.length() == 0 && _paragraphs.empty() &&
+                (para.startsWith("―") || para.startsWith("—") ||
+                 para.startsWith("─") || para.startsWith("【"))) {
+                // This might be an author attribution
+                _author = para;
+                _author.replace("―", "");
+                _author.replace("—", "");
+                _author.replace("─", "");
+                _author.replace("【", "");
+                _author.replace("】", "");
+                _author.trim();
+            } else {
+                _paragraphs.push_back(para);
+            }
+        }
+
+        start = end + 1;
+    }
+}
+
+bool CopyScreen::loadFromTextFile(int dayOfYear) {
     char target[8];
     sprintf(target, "#%03d", dayOfYear);
-    _date = String(dt.date.month) + "月" + String(dt.date.date) + "日";
 
-    Serial.printf("CopyScreen: Loading day %d (%s)\n", dayOfYear, target);
+    Serial.printf("CopyScreen: Trying text file for %s\n", target);
 
     File f;
     String filePath = String(DIR_BOOKS) + "/365.txt";
@@ -51,9 +208,6 @@ bool CopyScreen::loadTodayContent() {
     }
 
     bool found = false;
-    _paragraphs.clear();
-    _title = "";
-    _author = "";
 
     while (f.available()) {
         String line = f.readStringUntil('\n');
@@ -81,14 +235,6 @@ bool CopyScreen::loadTodayContent() {
     }
     f.close();
 
-    // Reset scroll on new content
-    resetScroll();
-    _contentHeight = calculateContentHeight();
-
-    Serial.printf("CopyScreen: Loaded '%s' by %s, %d paragraphs, height=%d\n",
-                  _title.c_str(), _author.c_str(), _paragraphs.size(), _contentHeight);
-
-    requestRedraw();
     return _paragraphs.size() > 0;
 }
 
@@ -250,17 +396,23 @@ void CopyScreen::drawEmptyState() {
 
     int centerY = CONTENT_HEIGHT / 2;
 
-    M5.Display.setCursor(PAD_X, centerY - 60);
+    M5.Display.setCursor(PAD_X, centerY - 80);
     M5.Display.printf("%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
 
-    M5.Display.setCursor(PAD_X, centerY - 20);
+    M5.Display.setCursor(PAD_X, centerY - 40);
     M5.Display.println("오늘의 필사 내용이 없습니다");
 
     M5.Display.setTextSize(0.9);
-    M5.Display.setCursor(PAD_X, centerY + 30);
-    M5.Display.println("SD 카드의 /books/365.txt 파일이 필요합니다");
+    M5.Display.setCursor(PAD_X, centerY + 10);
+    M5.Display.println("필요한 파일:");
 
-    M5.Display.setCursor(PAD_X, centerY + 70);
+    M5.Display.setCursor(PAD_X + 20, centerY + 45);
+    M5.Display.println("- /books/365*.epub (EPUB 형식)");
+
+    M5.Display.setCursor(PAD_X + 20, centerY + 75);
+    M5.Display.println("- /books/365.txt (텍스트 형식)");
+
+    M5.Display.setCursor(PAD_X, centerY + 115);
     M5.Display.println("설정 > WiFi 파일 전송으로 업로드하세요");
 }
 

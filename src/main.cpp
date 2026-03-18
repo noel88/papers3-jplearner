@@ -491,34 +491,55 @@ void startWiFiMode() {
 
     M5.Display.fillScreen(TFT_WHITE);
     M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(1.0);
 
     int y = PAD_Y;
+
+    // Back button header
     M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("WiFi File Transfer Mode");
+    M5.Display.print("< 뒤로가기");
+    M5.Display.drawLine(PAD_X, y + 35, SCREEN_WIDTH - PAD_X, y + 35, TFT_BLACK);
+    y += 50;
+
+    // Title
+    M5.Display.setCursor(PAD_X, y);
+    M5.Display.println("WiFi 파일 전송 모드");
     y += 60;
 
     M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("1. Connect to WiFi:");
+    M5.Display.println("1. WiFi 연결:");
     y += 40;
 
     M5.Display.setCursor(PAD_X + 40, y);
     M5.Display.printf("SSID: %s", config.apSsid.c_str());
     y += 35;
     M5.Display.setCursor(PAD_X + 40, y);
-    M5.Display.printf("Pass: %s", config.apPassword.c_str());
+    M5.Display.printf("비밀번호: %s", config.apPassword.c_str());
     y += 50;
 
     M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("2. Open browser:");
+    M5.Display.println("2. 브라우저 열기:");
     y += 40;
 
     M5.Display.setCursor(PAD_X + 40, y);
     M5.Display.printf("http://%s", IP.toString().c_str());
-    y += 60;
+    y += 80;
 
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.println("Touch screen to exit WiFi mode");
+    // Exit button at bottom
+    int btnW = 300;
+    int btnH = 60;
+    int btnX = (SCREEN_WIDTH - btnW) / 2;
+    int btnY = CONTENT_HEIGHT - btnH - 40;
+
+    M5.Display.fillRect(btnX, btnY, btnW, btnH, TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    String exitText = "종료하기";
+    int textW = M5.Display.textWidth(exitText.c_str());
+    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 18);
+    M5.Display.print(exitText);
+
+    M5.Display.setTextColor(TFT_BLACK);
 
     M5.Display.display();
 }
@@ -535,15 +556,31 @@ void stopWiFiMode() {
 // Display Refresh
 // ============================================
 int refreshCount = 0;
-const int FULL_CLEAR_INTERVAL = 5;
+const int FULL_CLEAR_INTERVAL = 3;  // More frequent full clear to reduce ghosting
 
 void refreshDisplay() {
     if (needsFullRedraw || ScreenManager::instance().needsRedraw()) {
         refreshCount++;
+
+        // Always use quality mode for main content
+        M5.Display.setEpdMode(epd_mode_t::epd_quality);
+
+        // Full clear cycle to remove vertical ghosting
         if (refreshCount >= FULL_CLEAR_INTERVAL) {
-            M5.Display.clearDisplay();
+            // Complete clear sequence: black → white → content
+            M5.Display.fillScreen(TFT_BLACK);
+            M5.Display.display();
+            M5.Display.waitDisplay();
+            delay(50);
+
+            M5.Display.fillScreen(TFT_WHITE);
+            M5.Display.display();
             M5.Display.waitDisplay();
             refreshCount = 0;
+        } else {
+            // Normal clear
+            M5.Display.clearDisplay();
+            M5.Display.waitDisplay();
         }
 
         M5.Display.fillScreen(TFT_WHITE);
@@ -554,9 +591,12 @@ void refreshDisplay() {
         needsFullRedraw = false;
         needsTabRedraw = false;
     } else if (needsTabRedraw) {
+        // Tab-only update can use faster mode
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
         drawTabBar();
         M5.Display.display();
         M5.Display.waitDisplay();
+        M5.Display.setEpdMode(epd_mode_t::epd_quality);
         needsTabRedraw = false;
     }
 }
@@ -686,6 +726,8 @@ void loop() {
             if (tabTouched >= 0) {
                 sm.switchTo((TabIndex)tabTouched);
                 needsFullRedraw = true;
+                // Force full clear on tab switch to eliminate ghosting
+                refreshCount = FULL_CLEAR_INTERVAL;
             }
         }
     } else if (touch.isPressed()) {

@@ -19,6 +19,7 @@
 #include "WebUI.h"
 #include "UIHelpers.h"
 #include "SleepManager.h"
+#include "SRSManager.h"
 
 // ============================================
 // Hardware Configuration
@@ -732,6 +733,9 @@ void setup() {
 
     // Initialize sleep manager
     SleepManager::instance().init();
+
+    // Initialize SRS system
+    SRSManager::instance().init();
 
     // Draw initial screen
     needsFullRedraw = true;

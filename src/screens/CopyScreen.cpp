@@ -2,6 +2,7 @@
 #include "Config.h"
 #include "FontManager.h"
 #include "UIHelpers.h"
+#include "SRSManager.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
@@ -958,16 +959,17 @@ void CopyScreen::handlePopupAction(PopupMenu::Action action) {
 }
 
 void CopyScreen::saveToVocabulary(const String& word) {
-    // Ensure directory exists
-    if (!LittleFS.exists("/userdata")) {
-        LittleFS.mkdir("/userdata");
+    SRSManager& srs = SRSManager::instance();
+
+    // Check if already saved
+    if (srs.hasCard(word, "word")) {
+        showToast("이미 저장됨");
+        return;
     }
 
-    // Save word to vocabulary file in LittleFS
-    File file = LittleFS.open("/userdata/vocabulary.txt", FILE_APPEND);
-    if (file) {
-        file.println(word);
-        file.close();
+    // Add as SRS card
+    String cardId = srs.addCard("word", word, "");  // Back will be filled later or by user
+    if (cardId.length() > 0) {
         showToast("단어 저장됨");
     } else {
         showToast("저장 실패");
@@ -975,16 +977,17 @@ void CopyScreen::saveToVocabulary(const String& word) {
 }
 
 void CopyScreen::saveToGrammar(const String& text) {
-    // Ensure directory exists
-    if (!LittleFS.exists("/userdata")) {
-        LittleFS.mkdir("/userdata");
+    SRSManager& srs = SRSManager::instance();
+
+    // Check if already saved
+    if (srs.hasCard(text, "grammar")) {
+        showToast("이미 저장됨");
+        return;
     }
 
-    // Save text to grammar patterns file in LittleFS
-    File file = LittleFS.open("/userdata/grammar.txt", FILE_APPEND);
-    if (file) {
-        file.println(text);
-        file.close();
+    // Add as SRS card
+    String cardId = srs.addCard("grammar", text, "");  // Back will be filled later
+    if (cardId.length() > 0) {
         showToast("문형 저장됨");
     } else {
         showToast("저장 실패");

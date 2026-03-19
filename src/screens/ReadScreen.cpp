@@ -599,10 +599,11 @@ void ReadScreen::handleWordSelection(int x, int y) {
         int popupY = word.y;
         _popupMenu.show(popupX, popupY, word.text);
 
-        // Redraw to show highlight and popup
+        // Draw highlight and popup - partial update only
         M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         M5.Display.startWrite();
-        drawReadingContent();
+        _textLayout.drawHighlight();
+        _popupMenu.draw();
         M5.Display.endWrite();
 
         Serial.printf("Selected word: '%s'\n", word.text.c_str());
@@ -680,6 +681,13 @@ bool ReadScreen::handleTouchEnd() {
         _touchInContentArea = false;
 
         unsigned long pressDuration = millis() - _touchStartTime;
+        int dx = abs(M5.Touch.getDetail().x - _touchStartX);
+        int dy = abs(M5.Touch.getDetail().y - _touchStartY);
+
+        // Cancel if moved too much (not a tap/long press)
+        if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+            return false;
+        }
 
         // Long press - word selection
         if (pressDuration >= LONG_PRESS_MS) {

@@ -702,10 +702,10 @@ bool CopyScreen::handleTouchMove(int x, int y) {
             _textLayout.setSelection(startWord);
             _inDragSelection = true;
 
-            // Draw initial highlight
+            // Draw initial highlight - partial update only
             M5.Display.setEpdMode(epd_mode_t::epd_fastest);
             M5.Display.startWrite();
-            drawPageContent();
+            _textLayout.drawHighlight();
             M5.Display.endWrite();
         }
         return false;
@@ -717,13 +717,14 @@ bool CopyScreen::handleTouchMove(int x, int y) {
         if (_textLayout.findWordAt(x, y, currentWord)) {
             // Only update if different from current selection
             if (currentWord.x != _dragStartWord.x || currentWord.y != _dragStartWord.y) {
-                _textLayout.setRangeSelection(_dragStartWord, currentWord);
-
-                // Redraw with updated selection
+                // Clear old highlight first
                 M5.Display.setEpdMode(epd_mode_t::epd_fastest);
                 M5.Display.startWrite();
-                drawPageContent();
+                drawPageContent();  // Need full redraw for drag to clear old highlight
                 M5.Display.endWrite();
+
+                // Update selection
+                _textLayout.setRangeSelection(_dragStartWord, currentWord);
             }
         }
     }

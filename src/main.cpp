@@ -986,17 +986,12 @@ void loop() {
         }
     } else if (touch.isPressed()) {
         sleepMgr.resetActivity();  // Reset sleep timer on touch
-        // Dragging
-        if (sm.handleTouchMove(touch.x, touch.y)) {
-            needsFullRedraw = true;
-            refreshDisplay();
-        }
+        // Dragging - screen handles its own partial updates
+        sm.handleTouchMove(touch.x, touch.y);
     } else if (touch.wasReleased()) {
         sleepMgr.resetActivity();  // Reset sleep timer on touch
-        // End drag
-        if (sm.handleTouchEnd()) {
-            needsFullRedraw = true;
-        }
+        // End drag - screen handles its own partial updates
+        sm.handleTouchEnd();
     }
 
     refreshDisplay();

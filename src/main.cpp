@@ -18,6 +18,7 @@
 #include "FontManager.h"
 #include "WebUI.h"
 #include "UIHelpers.h"
+#include "SleepManager.h"
 
 // ============================================
 // Hardware Configuration
@@ -739,6 +740,9 @@ void setup() {
     // Switch to initial tab (calls onEnter which loads content)
     sm.switchTo(TAB_COPY);
 
+    // Initialize sleep manager
+    SleepManager::instance().init();
+
     // Draw initial screen
     needsFullRedraw = true;
     refreshDisplay();
@@ -756,6 +760,21 @@ void loop() {
         return;
     }
 
+    SleepManager& sleepMgr = SleepManager::instance();
+
+    // Check if waking from sleep
+    if (sleepMgr.isSleeping()) {
+        // Just woke up - force full redraw
+        needsFullRedraw = true;
+        refreshCount = FULL_CLEAR_INTERVAL;
+        sleepMgr.resetActivity();
+    }
+
+    // Check sleep timeout (only if not in WiFi mode)
+    if (!wifiMode) {
+        sleepMgr.update();
+    }
+
     updateBattery();
 
     auto touch = M5.Touch.getDetail();
@@ -763,6 +782,7 @@ void loop() {
     // WiFi mode handling
     if (wifiMode) {
         if (touch.wasPressed()) {
+            sleepMgr.resetActivity();
             delay(300);
             stopWiFiMode();
             copyScreen.loadTodayContent();
@@ -776,6 +796,8 @@ void loop() {
 
     // Touch handling
     if (touch.wasPressed()) {
+        sleepMgr.resetActivity();  // Reset sleep timer on touch
+
         int touchY = touch.y;
         int tabY = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
 
@@ -795,12 +817,14 @@ void loop() {
             }
         }
     } else if (touch.isPressed()) {
+        sleepMgr.resetActivity();  // Reset sleep timer on touch
         // Dragging
         if (sm.handleTouchMove(touch.x, touch.y)) {
             needsFullRedraw = true;
             refreshDisplay();
         }
     } else if (touch.wasReleased()) {
+        sleepMgr.resetActivity();  // Reset sleep timer on touch
         // End drag
         if (sm.handleTouchEnd()) {
             needsFullRedraw = true;

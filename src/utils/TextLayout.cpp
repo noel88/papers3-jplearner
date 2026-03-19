@@ -7,7 +7,8 @@ TextLayout::TextLayout()
 
 void TextLayout::clear() {
     _lines.clear();
-    _hasSelection = false;
+    // Don't clear selection here - it should persist across redraws
+    // Use clearSelection() explicitly when needed
 }
 
 void TextLayout::addLine(int paraIndex, int byteStart, int byteEnd,

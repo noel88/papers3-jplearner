@@ -717,7 +717,7 @@ bool CopyScreen::handleTouchStart(int x, int y) {
         // Touch outside popup - dismiss it
         _textLayout.clearSelection();
         _popupMenu.hide();
-        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         M5.Display.startWrite();
         drawPageContent();
         M5.Display.endWrite();
@@ -820,7 +820,7 @@ bool CopyScreen::handleTouchEnd() {
     if (_textLayout.hasSelection()) {
         _textLayout.clearSelection();
         _popupMenu.hide();
-        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         M5.Display.startWrite();
         drawPageContent();
         M5.Display.endWrite();
@@ -842,10 +842,11 @@ void CopyScreen::handleWordSelection(int x, int y) {
         int popupY = word.y;
         _popupMenu.show(popupX, popupY, word.text);
 
-        // Redraw to show highlight and popup
-        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        // Use fastest mode for minimal flicker
+        // Redraw full content to ensure highlight shows correctly on e-ink
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         M5.Display.startWrite();
-        drawPageContent();
+        drawPageContent();  // This includes highlight and popup
         M5.Display.endWrite();
     } else {
         // Touch on empty area - clear selection
@@ -853,8 +854,8 @@ void CopyScreen::handleWordSelection(int x, int y) {
             _textLayout.clearSelection();
             _popupMenu.hide();
 
-            // Redraw to remove highlight
-            M5.Display.setEpdMode(epd_mode_t::epd_fast);
+            // Redraw content to remove highlight - need full redraw here
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
             M5.Display.startWrite();
             drawPageContent();
             M5.Display.endWrite();
@@ -887,8 +888,8 @@ void CopyScreen::handlePopupAction(PopupMenu::Action action) {
     _textLayout.clearSelection();
     _popupMenu.hide();
 
-    // Redraw
-    M5.Display.setEpdMode(epd_mode_t::epd_fast);
+    // Redraw with fastest mode for minimal flicker
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
     M5.Display.startWrite();
     drawPageContent();
     M5.Display.endWrite();

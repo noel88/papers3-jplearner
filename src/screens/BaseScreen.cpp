@@ -1,4 +1,5 @@
 #include "screens/BaseScreen.h"
+#include "UIHelpers.h"
 
 BaseScreen::BaseScreen()
     : _needsRedraw(true) {
@@ -22,20 +23,20 @@ void BaseScreen::clearContentArea() {
 void BaseScreen::drawCenteredText(const char* text, int y) {
     int textWidth = M5.Display.textWidth(text);
     int x = (SCREEN_WIDTH - textWidth) / 2;
-    M5.Display.setCursor(x, y);
-    M5.Display.print(text);
+    UI::drawBoldText(text, x, y);
 }
 
 void BaseScreen::drawPlaceholder(const char* title, const char* description) {
     clearContentArea();
 
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_TITLE);
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Title - centered
-    drawCenteredText(title, CONTENT_HEIGHT / 2 - 40);
+    // Title - centered (bold)
+    UI::drawBoldTextCentered(title, CONTENT_HEIGHT / 2 - 40);
 
-    // Description - centered
-    drawCenteredText(description, CONTENT_HEIGHT / 2 + 20);
+    // Description - centered (bold)
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
+    UI::drawBoldTextCentered(description, CONTENT_HEIGHT / 2 + 20);
 }

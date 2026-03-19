@@ -1,6 +1,7 @@
 #include "screens/CopyScreen.h"
 #include "Config.h"
 #include "FontManager.h"
+#include "UIHelpers.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
@@ -639,32 +640,29 @@ void CopyScreen::drawNavigation() {
     M5.Display.drawLine(PAD_X, navY, SCREEN_WIDTH - PAD_X, navY, TFT_LIGHTGRAY);
 
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
 
     int buttonY = navY + (NAV_HEIGHT - 30) / 2;
     int buttonW = 120;
 
-    // Previous button (left)
+    // Previous button (left, bold)
     if (_currentPage > 0) {
         M5.Display.setTextColor(TFT_BLACK);
-        M5.Display.setCursor(PAD_X + 20, buttonY);
-        M5.Display.print("< 이전");
+        UI::drawBoldText("< 이전", PAD_X + 20, buttonY);
     }
 
-    // Page indicator (center)
+    // Page indicator (center, bold)
     M5.Display.setTextColor(TFT_DARKGRAY);
     String pageInfo = String(_currentPage + 1) + " / " + String(_totalPages);
     int pageInfoW = M5.Display.textWidth(pageInfo.c_str());
-    M5.Display.setCursor((SCREEN_WIDTH - pageInfoW) / 2, buttonY);
-    M5.Display.print(pageInfo);
+    UI::drawBoldText(pageInfo.c_str(), (SCREEN_WIDTH - pageInfoW) / 2, buttonY);
 
-    // Next button (right)
+    // Next button (right, bold)
     if (_currentPage < _totalPages - 1) {
         M5.Display.setTextColor(TFT_BLACK);
         String nextText = "다음 >";
         int nextW = M5.Display.textWidth(nextText.c_str());
-        M5.Display.setCursor(SCREEN_WIDTH - PAD_X - nextW - 20, buttonY);
-        M5.Display.print(nextText);
+        UI::drawBoldText(nextText.c_str(), SCREEN_WIDTH - PAD_X - nextW - 20, buttonY);
     }
 }
 
@@ -673,7 +671,7 @@ void CopyScreen::drawEmptyState() {
     M5.Display.fillRect(0, 0, SCREEN_WIDTH, availableHeight, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
     M5.Display.setTextColor(TFT_BLACK);
 
     auto dt = M5.Rtc.getDateTime();
@@ -681,24 +679,20 @@ void CopyScreen::drawEmptyState() {
 
     int centerY = availableHeight / 2;
 
-    M5.Display.setCursor(PAD_X, centerY - 80);
-    M5.Display.printf("%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
+    char dateBuf[32];
+    snprintf(dateBuf, sizeof(dateBuf), "%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
+    UI::drawBoldText(dateBuf, PAD_X, centerY - 80);
 
-    M5.Display.setCursor(PAD_X, centerY - 40);
-    M5.Display.println("오늘의 필사 내용이 없습니다");
+    UI::drawBoldText("오늘의 필사 내용이 없습니다", PAD_X, centerY - 40);
 
-    M5.Display.setTextSize(0.9);
-    M5.Display.setCursor(PAD_X, centerY + 10);
-    M5.Display.println("필요한 파일:");
+    M5.Display.setTextSize(UI::SIZE_BODY);
+    UI::drawBoldText("필요한 파일:", PAD_X, centerY + 10);
 
-    M5.Display.setCursor(PAD_X + 20, centerY + 45);
-    M5.Display.println("- /books/365*.epub (EPUB 형식)");
+    UI::drawBoldText("- /books/365*.epub (EPUB 형식)", PAD_X + 20, centerY + 45);
 
-    M5.Display.setCursor(PAD_X + 20, centerY + 75);
-    M5.Display.println("- /books/365.txt (텍스트 형식)");
+    UI::drawBoldText("- /books/365.txt (텍스트 형식)", PAD_X + 20, centerY + 75);
 
-    M5.Display.setCursor(PAD_X, centerY + 115);
-    M5.Display.println("설정 > WiFi 파일 전송으로 업로드하세요");
+    UI::drawBoldText("설정 > WiFi 파일 전송으로 업로드하세요", PAD_X, centerY + 115);
 }
 
 void CopyScreen::draw() {

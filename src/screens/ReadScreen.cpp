@@ -1,6 +1,7 @@
 #include "screens/ReadScreen.h"
 #include "Config.h"
 #include "FontManager.h"
+#include "UIHelpers.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
@@ -210,31 +211,29 @@ void ReadScreen::drawBookSelection() {
     // Clear screen
     M5.Display.fillRect(0, 0, SCREEN_WIDTH, availableHeight, TFT_WHITE);
 
-    // Header
+    // Header (bold)
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_TITLE);
     M5.Display.setTextColor(TFT_BLACK);
-    M5.Display.setCursor(PAD_X, 15);
-    M5.Display.print("책 선택");
+    UI::drawBoldText("책 선택", PAD_X, 15);
 
-    // Book count
+    // Book count (bold)
     M5.Display.setTextColor(TFT_DARKGRAY);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
     String countStr = String(_books.size()) + "권";
     int countW = M5.Display.textWidth(countStr.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - countW, 15);
-    M5.Display.print(countStr);
+    UI::drawBoldText(countStr.c_str(), SCREEN_WIDTH - PAD_X - countW, 15);
 
     // Separator
     M5.Display.drawLine(PAD_X, HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, HEADER_HEIGHT - 1, TFT_BLACK);
 
     if (_books.empty()) {
-        // Empty state
+        // Empty state (bold)
         M5.Display.setTextColor(TFT_BLACK);
+        M5.Display.setTextSize(UI::SIZE_CONTENT);
         int centerY = availableHeight / 2;
-        M5.Display.setCursor(PAD_X, centerY - 20);
-        M5.Display.println("책이 없습니다");
-        M5.Display.setCursor(PAD_X, centerY + 20);
-        M5.Display.println("/books/ 폴더에 EPUB 파일을 추가하세요");
+        UI::drawBoldText("책이 없습니다", PAD_X, centerY - 20);
+        UI::drawBoldText("/books/ 폴더에 EPUB 파일을 추가하세요", PAD_X, centerY + 20);
         return;
     }
 
@@ -581,30 +580,28 @@ void ReadScreen::drawReadingNavigation() {
     M5.Display.drawLine(PAD_X, navY, SCREEN_WIDTH - PAD_X, navY, TFT_LIGHTGRAY);
 
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
 
     int buttonY = navY + (NAV_HEIGHT - 30) / 2;
 
-    // Previous page/chapter
+    // Previous page/chapter (bold)
     bool canGoPrev = _currentPage > 0 || _currentChapter > 0;
     if (canGoPrev) {
         M5.Display.setTextColor(TFT_BLACK);
-        M5.Display.setCursor(PAD_X + 20, buttonY);
         if (_currentPage > 0) {
-            M5.Display.print("< 이전");
+            UI::drawBoldText("< 이전", PAD_X + 20, buttonY);
         } else {
-            M5.Display.print("<< 이전장");
+            UI::drawBoldText("<< 이전장", PAD_X + 20, buttonY);
         }
     }
 
-    // Page indicator
+    // Page indicator (bold)
     M5.Display.setTextColor(TFT_DARKGRAY);
     String pageInfo = String(_currentPage + 1) + " / " + String(_totalPages);
     int pageInfoW = M5.Display.textWidth(pageInfo.c_str());
-    M5.Display.setCursor((SCREEN_WIDTH - pageInfoW) / 2, buttonY);
-    M5.Display.print(pageInfo);
+    UI::drawBoldText(pageInfo.c_str(), (SCREEN_WIDTH - pageInfoW) / 2, buttonY);
 
-    // Next page/chapter
+    // Next page/chapter (bold)
     bool canGoNext = _currentPage < _totalPages - 1 || _currentChapter < _epubParser.getChapterCount() - 1;
     if (canGoNext) {
         M5.Display.setTextColor(TFT_BLACK);
@@ -615,8 +612,7 @@ void ReadScreen::drawReadingNavigation() {
             nextText = "다음장 >>";
         }
         int nextW = M5.Display.textWidth(nextText.c_str());
-        M5.Display.setCursor(SCREEN_WIDTH - PAD_X - nextW - 20, buttonY);
-        M5.Display.print(nextText);
+        UI::drawBoldText(nextText.c_str(), SCREEN_WIDTH - PAD_X - nextW - 20, buttonY);
     }
 }
 
@@ -839,7 +835,7 @@ void ReadScreen::drawChapterList() {
     M5.Display.fillRect(0, 0, SCREEN_WIDTH, availableHeight, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
     M5.Display.setTextColor(TFT_BLACK);
 
     int fontH = M5.Display.fontHeight();
@@ -848,9 +844,8 @@ void ReadScreen::drawChapterList() {
     M5.Display.fillRect(0, 0, SCREEN_WIDTH, HEADER_HEIGHT, TFT_WHITE);
     M5.Display.drawLine(PAD_X, HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, HEADER_HEIGHT - 1, TFT_BLACK);
 
-    // Back button (left)
-    M5.Display.setCursor(PAD_X, (HEADER_HEIGHT - fontH) / 2);
-    M5.Display.print("< 뒤로");
+    // Back button (left, bold)
+    UI::drawBoldText("< 뒤로", PAD_X, (HEADER_HEIGHT - fontH) / 2);
 
     // Title (center)
     String title = "목차";
@@ -939,28 +934,25 @@ void ReadScreen::drawChapterList() {
     M5.Display.setTextColor(TFT_BLACK);
     int navTextY = navY + (NAV_HEIGHT - fontH) / 2;
 
-    // Previous page indicator
+    // Previous page indicator (bold)
     if (_chapterListScroll > 0) {
-        M5.Display.setCursor(PAD_X + 20, navTextY);
-        M5.Display.print("< 이전");
+        UI::drawBoldText("< 이전", PAD_X + 20, navTextY);
     }
 
-    // Page info
+    // Page info (bold)
     int startNum = _chapterListScroll + 1;
     int endNum = min(_chapterListScroll + CHAPTERS_PER_PAGE, totalChapters);
     String pageInfo = String(startNum) + "-" + String(endNum) + " / " + String(totalChapters);
     int pageInfoW = M5.Display.textWidth(pageInfo.c_str());
     M5.Display.setTextColor(TFT_DARKGRAY);
-    M5.Display.setCursor((SCREEN_WIDTH - pageInfoW) / 2, navTextY);
-    M5.Display.print(pageInfo);
+    UI::drawBoldText(pageInfo.c_str(), (SCREEN_WIDTH - pageInfoW) / 2, navTextY);
 
-    // Next page indicator
+    // Next page indicator (bold)
     if (_chapterListScroll + CHAPTERS_PER_PAGE < totalChapters) {
         M5.Display.setTextColor(TFT_BLACK);
         String nextText = "다음 >";
         int nextW = M5.Display.textWidth(nextText.c_str());
-        M5.Display.setCursor(SCREEN_WIDTH - PAD_X - nextW - 20, navTextY);
-        M5.Display.print(nextText);
+        UI::drawBoldText(nextText.c_str(), SCREEN_WIDTH - PAD_X - nextW - 20, navTextY);
     }
 }
 

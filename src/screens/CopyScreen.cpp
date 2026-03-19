@@ -794,30 +794,39 @@ bool CopyScreen::handleTouchMove(int x, int y) {
     int dx = abs(x - _touchStartX);
     int dy = abs(y - _touchStartY);
 
-    // Check if long press threshold reached and user is dragging
-    if (pressDuration >= LONG_PRESS_MS) {
-        // Start drag selection if not already
-        if (!_inDragSelection) {
-            // Select first word at start position
-            WordInfo startWord;
-            if (_textLayout.findWordAt(_touchStartX, _touchStartY, startWord)) {
-                _dragStartWord = startWord;
-                _textLayout.setSelection(startWord);
-                _inDragSelection = true;
-
-                // Draw initial highlight
-                M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-                M5.Display.startWrite();
-                drawPageContent();
-                M5.Display.endWrite();
-            }
+    // Before long press threshold
+    if (pressDuration < LONG_PRESS_MS) {
+        // If moved too much, cancel long press
+        if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+            _touchInContentArea = false;
         }
+        return false;
+    }
 
-        // Extend selection to current position
-        if (_inDragSelection && (dx > 5 || dy > 5)) {
-            WordInfo currentWord;
-            if (_textLayout.findWordAt(x, y, currentWord)) {
-                // Create extended selection from start to current
+    // Long press threshold reached
+    // First, select word at start position if not done yet
+    if (!_inDragSelection) {
+        WordInfo startWord;
+        if (_textLayout.findWordAt(_touchStartX, _touchStartY, startWord)) {
+            _dragStartWord = startWord;
+            _textLayout.setSelection(startWord);
+            _inDragSelection = true;
+
+            // Draw initial highlight
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            drawPageContent();
+            M5.Display.endWrite();
+        }
+        return false;
+    }
+
+    // Already in drag mode - extend selection if moved enough
+    if (dx > 10 || dy > 10) {
+        WordInfo currentWord;
+        if (_textLayout.findWordAt(x, y, currentWord)) {
+            // Only update if different from current selection
+            if (currentWord.x != _dragStartWord.x || currentWord.y != _dragStartWord.y) {
                 _textLayout.setRangeSelection(_dragStartWord, currentWord);
 
                 // Redraw with updated selection
@@ -827,13 +836,6 @@ bool CopyScreen::handleTouchMove(int x, int y) {
                 M5.Display.endWrite();
             }
         }
-        // Return false - we handled our own display update
-        return false;
-    }
-
-    // Before long press threshold, check if moved too much
-    if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
-        _touchInContentArea = false;  // Cancel long press
     }
 
     return false;

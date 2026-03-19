@@ -8,34 +8,52 @@
 /**
  * DictionaryManager - Offline Japanese dictionary with SD-based lookup
  *
+ * Supports multiple dictionary sources:
+ * - JMdict (Japanese-English, reading-based index)
+ * - Wiktionary (word-based index, more detailed)
+ *
  * Dictionary Format (optimized for ESP32):
  *
- * 1. Index file (dict/index.bin):
- *    - Sorted by reading (hiragana)
- *    - Each entry: reading_hash(4) + file_offset(4) + entry_length(2)
+ * 1. Index file (dict/index.bin or dict/wikt_index.bin):
+ *    - Sorted by hash (reading or word)
+ *    - Each entry: hash(4) + file_offset(4) + entry_length(2)
  *    - Binary search for O(log n) lookup
  *
- * 2. Data file (dict/entries.dat):
+ * 2. Data file (dict/entries.dat or dict/wikt_entries.dat):
  *    - Variable-length entries
- *    - Format: word\treadings\tmeanings\n
- *    - Meanings can include Korean translations
+ *    - Format: word\treading\tmeanings\tpos\n
  *
- * Memory usage: Only index (~2MB) loaded to PSRAM
+ * Memory usage: Index loaded to PSRAM (~2-3MB)
  * Lookup: Binary search index → seek to file offset → read entry
  */
 
 struct DictEntry {
     String word;           // 漢字 or kana
     String reading;        // ひらがな reading
-    String meanings;       // Meanings (Korean/English)
+    String meanings;       // Meanings (English)
     String partOfSpeech;   // 品詞 (noun, verb, etc.)
+    String source;         // "jmdict" or "wikt"
 };
 
 struct IndexEntry {
-    uint32_t hash;         // FNV-1a hash of reading
+    uint32_t hash;         // FNV-1a hash
     uint32_t offset;       // File offset in entries.dat
     uint16_t length;       // Entry length in bytes
 } __attribute__((packed));
+
+/**
+ * Dictionary source info
+ */
+struct DictSource {
+    bool loaded;
+    int entryCount;
+    size_t indexSize;
+    IndexEntry* index;
+    const char* indexPath;
+    const char* dataPath;
+    const char* name;
+    bool hashByWord;       // true: hash by word, false: hash by reading
+};
 
 class DictionaryManager {
 public:
@@ -46,18 +64,25 @@ public:
 
     /**
      * Initialize dictionary
-     * Loads index from SD card to PSRAM
-     * @return true if dictionary loaded successfully
+     * Loads available dictionaries from SD card to PSRAM
+     * @return true if at least one dictionary loaded successfully
      */
     bool init();
 
     /**
      * Check if dictionary is available
      */
-    bool isAvailable() const { return _initialized; }
+    bool isAvailable() const { return _jmdict.loaded || _wiktionary.loaded; }
+
+    /**
+     * Check which dictionaries are available
+     */
+    bool hasJMdict() const { return _jmdict.loaded; }
+    bool hasWiktionary() const { return _wiktionary.loaded; }
 
     /**
      * Look up a word by its reading (hiragana)
+     * Uses JMdict (reading-indexed)
      * @param reading Hiragana reading to search
      * @return Vector of matching entries
      */
@@ -65,6 +90,7 @@ public:
 
     /**
      * Look up a word by its kanji/kana form
+     * Uses both dictionaries for best results
      * @param word Word to search (kanji or kana)
      * @return Vector of matching entries
      */
@@ -81,8 +107,9 @@ public:
     /**
      * Get dictionary stats
      */
-    int getEntryCount() const { return _entryCount; }
-    size_t getIndexSize() const { return _indexSize; }
+    int getJMdictEntryCount() const { return _jmdict.entryCount; }
+    int getWiktionaryEntryCount() const { return _wiktionary.entryCount; }
+    int getTotalEntryCount() const { return _jmdict.entryCount + _wiktionary.entryCount; }
 
 private:
     DictionaryManager() = default;
@@ -93,12 +120,12 @@ private:
     /**
      * Load index file to PSRAM
      */
-    bool loadIndex();
+    bool loadIndex(DictSource& source);
 
     /**
      * Read entry from data file at given offset
      */
-    DictEntry readEntry(uint32_t offset, uint16_t length);
+    DictEntry readEntry(const DictSource& source, uint32_t offset, uint16_t length);
 
     /**
      * Calculate FNV-1a hash of string
@@ -109,17 +136,18 @@ private:
      * Binary search in index
      * @return Vector of matching index entries (hash collisions possible)
      */
-    std::vector<IndexEntry> binarySearch(uint32_t hash);
+    std::vector<IndexEntry> binarySearch(const DictSource& source, uint32_t hash);
 
-    // State
-    bool _initialized = false;
-    int _entryCount = 0;
-    size_t _indexSize = 0;
+    // Dictionary sources
+    DictSource _jmdict = {
+        false, 0, 0, nullptr,
+        "/dict/index.bin", "/dict/entries.dat",
+        "jmdict", false  // hash by reading
+    };
 
-    // Index in PSRAM
-    IndexEntry* _index = nullptr;
-
-    // File paths
-    static constexpr const char* INDEX_PATH = "/dict/index.bin";
-    static constexpr const char* DATA_PATH = "/dict/entries.dat";
+    DictSource _wiktionary = {
+        false, 0, 0, nullptr,
+        "/dict/wikt_index.bin", "/dict/wikt_entries.dat",
+        "wikt", true  // hash by word
+    };
 };

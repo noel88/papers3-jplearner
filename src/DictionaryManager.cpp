@@ -2,31 +2,43 @@
 #include "esp_heap_caps.h"
 
 bool DictionaryManager::init() {
-    if (_initialized) return true;
-
     Serial.println("DictionaryManager: Initializing...");
 
-    if (!loadIndex()) {
-        Serial.println("DictionaryManager: Failed to load index");
+    // Try to load JMdict
+    if (loadIndex(_jmdict)) {
+        Serial.printf("DictionaryManager: JMdict loaded - %d entries, %zu bytes\n",
+                      _jmdict.entryCount, _jmdict.indexSize);
+    } else {
+        Serial.println("DictionaryManager: JMdict not available");
+    }
+
+    // Try to load Wiktionary
+    if (loadIndex(_wiktionary)) {
+        Serial.printf("DictionaryManager: Wiktionary loaded - %d entries, %zu bytes\n",
+                      _wiktionary.entryCount, _wiktionary.indexSize);
+    } else {
+        Serial.println("DictionaryManager: Wiktionary not available");
+    }
+
+    if (!isAvailable()) {
+        Serial.println("DictionaryManager: No dictionaries available");
         return false;
     }
 
-    _initialized = true;
-    Serial.printf("DictionaryManager: Loaded %d entries, index size: %zu bytes\n",
-                  _entryCount, _indexSize);
+    Serial.printf("DictionaryManager: Total %d entries available\n", getTotalEntryCount());
     return true;
 }
 
-bool DictionaryManager::loadIndex() {
+bool DictionaryManager::loadIndex(DictSource& source) {
     // Check if index file exists
-    if (!SD.exists(INDEX_PATH)) {
-        Serial.printf("DictionaryManager: Index file not found: %s\n", INDEX_PATH);
+    if (!SD.exists(source.indexPath)) {
+        Serial.printf("DictionaryManager: Index file not found: %s\n", source.indexPath);
         return false;
     }
 
-    File indexFile = SD.open(INDEX_PATH, FILE_READ);
+    File indexFile = SD.open(source.indexPath, FILE_READ);
     if (!indexFile) {
-        Serial.println("DictionaryManager: Failed to open index file");
+        Serial.printf("DictionaryManager: Failed to open index file: %s\n", source.indexPath);
         return false;
     }
 
@@ -38,32 +50,33 @@ bool DictionaryManager::loadIndex() {
         return false;
     }
 
-    _entryCount = entryCount;
-    _indexSize = entryCount * sizeof(IndexEntry);
+    source.entryCount = entryCount;
+    source.indexSize = entryCount * sizeof(IndexEntry);
 
-    Serial.printf("DictionaryManager: Loading %d index entries (%zu bytes)\n",
-                  entryCount, _indexSize);
+    Serial.printf("DictionaryManager: Loading %d index entries (%zu bytes) from %s\n",
+                  entryCount, source.indexSize, source.indexPath);
 
     // Allocate index in PSRAM
-    _index = (IndexEntry*)heap_caps_malloc(_indexSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (!_index) {
+    source.index = (IndexEntry*)heap_caps_malloc(source.indexSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!source.index) {
         Serial.println("DictionaryManager: Failed to allocate PSRAM for index");
         indexFile.close();
         return false;
     }
 
     // Read index data
-    size_t bytesRead = indexFile.read((uint8_t*)_index, _indexSize);
+    size_t bytesRead = indexFile.read((uint8_t*)source.index, source.indexSize);
     indexFile.close();
 
-    if (bytesRead != _indexSize) {
+    if (bytesRead != source.indexSize) {
         Serial.printf("DictionaryManager: Index read mismatch: %zu / %zu\n",
-                      bytesRead, _indexSize);
-        heap_caps_free(_index);
-        _index = nullptr;
+                      bytesRead, source.indexSize);
+        heap_caps_free(source.index);
+        source.index = nullptr;
         return false;
     }
 
+    source.loaded = true;
     return true;
 }
 
@@ -78,23 +91,23 @@ uint32_t DictionaryManager::fnvHash(const String& str) {
     return hash;
 }
 
-std::vector<IndexEntry> DictionaryManager::binarySearch(uint32_t hash) {
+std::vector<IndexEntry> DictionaryManager::binarySearch(const DictSource& source, uint32_t hash) {
     std::vector<IndexEntry> results;
 
-    if (!_index || _entryCount == 0) return results;
+    if (!source.index || source.entryCount == 0) return results;
 
     int left = 0;
-    int right = _entryCount - 1;
+    int right = source.entryCount - 1;
     int found = -1;
 
     // Binary search for first match
     while (left <= right) {
         int mid = left + (right - left) / 2;
 
-        if (_index[mid].hash == hash) {
+        if (source.index[mid].hash == hash) {
             found = mid;
             right = mid - 1;  // Continue searching left for first occurrence
-        } else if (_index[mid].hash < hash) {
+        } else if (source.index[mid].hash < hash) {
             left = mid + 1;
         } else {
             right = mid - 1;
@@ -104,19 +117,20 @@ std::vector<IndexEntry> DictionaryManager::binarySearch(uint32_t hash) {
     if (found < 0) return results;
 
     // Collect all entries with matching hash (handle collisions)
-    for (int i = found; i < _entryCount && _index[i].hash == hash; i++) {
-        results.push_back(_index[i]);
+    for (int i = found; i < source.entryCount && source.index[i].hash == hash; i++) {
+        results.push_back(source.index[i]);
     }
 
     return results;
 }
 
-DictEntry DictionaryManager::readEntry(uint32_t offset, uint16_t length) {
+DictEntry DictionaryManager::readEntry(const DictSource& source, uint32_t offset, uint16_t length) {
     DictEntry entry;
+    entry.source = source.name;
 
-    File dataFile = SD.open(DATA_PATH, FILE_READ);
+    File dataFile = SD.open(source.dataPath, FILE_READ);
     if (!dataFile) {
-        Serial.println("DictionaryManager: Failed to open data file");
+        Serial.printf("DictionaryManager: Failed to open data file: %s\n", source.dataPath);
         return entry;
     }
 
@@ -162,16 +176,17 @@ DictEntry DictionaryManager::readEntry(uint32_t offset, uint16_t length) {
 std::vector<DictEntry> DictionaryManager::lookupByReading(const String& reading) {
     std::vector<DictEntry> results;
 
-    if (!_initialized) return results;
+    // JMdict is indexed by reading
+    if (_jmdict.loaded) {
+        uint32_t hash = fnvHash(reading);
+        std::vector<IndexEntry> indexMatches = binarySearch(_jmdict, hash);
 
-    uint32_t hash = fnvHash(reading);
-    std::vector<IndexEntry> indexMatches = binarySearch(hash);
-
-    for (const auto& idx : indexMatches) {
-        DictEntry entry = readEntry(idx.offset, idx.length);
-        // Verify exact match (handle hash collisions)
-        if (entry.reading == reading) {
-            results.push_back(entry);
+        for (const auto& idx : indexMatches) {
+            DictEntry entry = readEntry(_jmdict, idx.offset, idx.length);
+            // Verify exact match (handle hash collisions)
+            if (entry.reading == reading) {
+                results.push_back(entry);
+            }
         }
     }
 
@@ -181,28 +196,41 @@ std::vector<DictEntry> DictionaryManager::lookupByReading(const String& reading)
 std::vector<DictEntry> DictionaryManager::lookupByWord(const String& word) {
     std::vector<DictEntry> results;
 
-    if (!_initialized) return results;
-
-    // First try lookup by treating word as reading
     uint32_t hash = fnvHash(word);
-    std::vector<IndexEntry> indexMatches = binarySearch(hash);
 
-    for (const auto& idx : indexMatches) {
-        DictEntry entry = readEntry(idx.offset, idx.length);
-        // Match either word or reading
-        if (entry.word == word || entry.reading == word) {
-            results.push_back(entry);
+    // Wiktionary is indexed by word - try first
+    if (_wiktionary.loaded) {
+        std::vector<IndexEntry> indexMatches = binarySearch(_wiktionary, hash);
+
+        for (const auto& idx : indexMatches) {
+            DictEntry entry = readEntry(_wiktionary, idx.offset, idx.length);
+            // Verify exact match
+            if (entry.word == word) {
+                results.push_back(entry);
+            }
         }
     }
 
-    // If no results, we need a linear scan (slower but necessary for kanji lookup)
-    // This is expensive, so limit to first 100 results
-    if (results.empty() && SD.exists(DATA_PATH)) {
-        File dataFile = SD.open(DATA_PATH, FILE_READ);
+    // Also try JMdict (indexed by reading)
+    if (_jmdict.loaded) {
+        std::vector<IndexEntry> indexMatches = binarySearch(_jmdict, hash);
+
+        for (const auto& idx : indexMatches) {
+            DictEntry entry = readEntry(_jmdict, idx.offset, idx.length);
+            // Match either word or reading
+            if (entry.word == word || entry.reading == word) {
+                results.push_back(entry);
+            }
+        }
+    }
+
+    // If still no results and JMdict available, do linear scan for kanji
+    if (results.empty() && _jmdict.loaded && SD.exists(_jmdict.dataPath)) {
+        File dataFile = SD.open(_jmdict.dataPath, FILE_READ);
         if (dataFile) {
             String line;
             int count = 0;
-            while (dataFile.available() && count < 100) {
+            while (dataFile.available() && count < 50) {
                 line = dataFile.readStringUntil('\n');
                 int tab1 = line.indexOf('\t');
                 if (tab1 > 0) {
@@ -213,6 +241,7 @@ std::vector<DictEntry> DictionaryManager::lookupByWord(const String& word) {
 
                         DictEntry entry;
                         entry.word = entryWord;
+                        entry.source = "jmdict";
                         if (tab2 > tab1) {
                             entry.reading = line.substring(tab1 + 1, tab2);
                         }
@@ -237,40 +266,52 @@ std::vector<DictEntry> DictionaryManager::lookupByWord(const String& word) {
 std::vector<DictEntry> DictionaryManager::search(const String& query, int maxResults) {
     std::vector<DictEntry> results;
 
-    if (!_initialized || !SD.exists(DATA_PATH)) return results;
+    // Search both dictionaries
+    auto searchInSource = [&](const DictSource& source) {
+        if (!source.loaded || !SD.exists(source.dataPath)) return;
 
-    // Linear scan for partial matches (expensive but necessary)
-    File dataFile = SD.open(DATA_PATH, FILE_READ);
-    if (!dataFile) return results;
+        File dataFile = SD.open(source.dataPath, FILE_READ);
+        if (!dataFile) return;
 
-    String line;
-    while (dataFile.available() && (int)results.size() < maxResults) {
-        line = dataFile.readStringUntil('\n');
+        String line;
+        while (dataFile.available() && (int)results.size() < maxResults) {
+            line = dataFile.readStringUntil('\n');
 
-        // Check if line contains query
-        if (line.indexOf(query) >= 0) {
-            int tab1 = line.indexOf('\t');
-            int tab2 = line.indexOf('\t', tab1 + 1);
-            int tab3 = line.indexOf('\t', tab2 + 1);
+            // Check if line contains query
+            if (line.indexOf(query) >= 0) {
+                int tab1 = line.indexOf('\t');
+                int tab2 = line.indexOf('\t', tab1 + 1);
+                int tab3 = line.indexOf('\t', tab2 + 1);
 
-            DictEntry entry;
-            if (tab1 > 0) {
-                entry.word = line.substring(0, tab1);
+                DictEntry entry;
+                entry.source = source.name;
+                if (tab1 > 0) {
+                    entry.word = line.substring(0, tab1);
+                }
+                if (tab2 > tab1) {
+                    entry.reading = line.substring(tab1 + 1, tab2);
+                }
+                if (tab3 > tab2) {
+                    entry.meanings = line.substring(tab2 + 1, tab3);
+                    entry.partOfSpeech = line.substring(tab3 + 1);
+                } else if (tab2 > 0) {
+                    entry.meanings = line.substring(tab2 + 1);
+                }
+
+                results.push_back(entry);
             }
-            if (tab2 > tab1) {
-                entry.reading = line.substring(tab1 + 1, tab2);
-            }
-            if (tab3 > tab2) {
-                entry.meanings = line.substring(tab2 + 1, tab3);
-                entry.partOfSpeech = line.substring(tab3 + 1);
-            } else if (tab2 > 0) {
-                entry.meanings = line.substring(tab2 + 1);
-            }
-
-            results.push_back(entry);
         }
+
+        dataFile.close();
+    };
+
+    // Search Wiktionary first (usually more detailed)
+    searchInSource(_wiktionary);
+
+    // Then JMdict if we need more results
+    if ((int)results.size() < maxResults) {
+        searchInSource(_jmdict);
     }
 
-    dataFile.close();
     return results;
 }

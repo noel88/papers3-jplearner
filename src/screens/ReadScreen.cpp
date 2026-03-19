@@ -14,6 +14,7 @@ ReadScreen::ReadScreen()
       _mode(Mode::BookSelection),
       _selectedBookIndex(-1),
       _gridScrollOffset(0),
+      _chapterListScroll(0),
       _currentChapter(0),
       _currentPage(0),
       _totalPages(0) {
@@ -185,10 +186,16 @@ void ReadScreen::draw() {
     M5.Display.setEpdMode(epd_mode_t::epd_fast);
     M5.Display.startWrite();
 
-    if (_mode == Mode::BookSelection) {
-        drawBookSelection();
-    } else {
-        drawReading();
+    switch (_mode) {
+        case Mode::BookSelection:
+            drawBookSelection();
+            break;
+        case Mode::ChapterList:
+            drawChapterList();
+            break;
+        case Mode::Reading:
+            drawReading();
+            break;
     }
 
     M5.Display.endWrite();
@@ -435,20 +442,32 @@ void ReadScreen::drawReadingHeader() {
     M5.Display.setTextSize(1.0);
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Back button
+    // Back button (left)
     M5.Display.setCursor(PAD_X, 15);
     M5.Display.print("< 목록");
 
-    // Chapter info
-    if (_selectedBookIndex >= 0 && _selectedBookIndex < _books.size()) {
+    // TOC button (right side, before chapter nav)
+    String tocBtn = "목차";
+    int tocW = M5.Display.textWidth(tocBtn.c_str());
+    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - 150, 15);
+    M5.Display.print(tocBtn);
+
+    // Chapter navigation (far right)
+    String chapterNav = String(_currentChapter + 1) + "/" + String(_epubParser.getChapterCount());
+    int navW = M5.Display.textWidth(chapterNav.c_str());
+    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - navW, 15);
+    M5.Display.print(chapterNav);
+
+    // Chapter title (center)
+    if (_selectedBookIndex >= 0 && _selectedBookIndex < (int)_books.size()) {
         const auto& chapters = _epubParser.getChapters();
         String chapterTitle = "";
-        if (_currentChapter < chapters.size()) {
+        if (_currentChapter < (int)chapters.size()) {
             chapterTitle = chapters[_currentChapter].title;
         }
 
         // Truncate if needed
-        int maxWidth = 500;
+        int maxWidth = 400;
         while (M5.Display.textWidth(chapterTitle.c_str()) > maxWidth && chapterTitle.length() > 10) {
             chapterTitle = chapterTitle.substring(0, chapterTitle.length() - 4) + "..";
         }
@@ -457,12 +476,6 @@ void ReadScreen::drawReadingHeader() {
         M5.Display.setCursor((SCREEN_WIDTH - titleW) / 2, 15);
         M5.Display.print(chapterTitle);
     }
-
-    // Chapter navigation
-    String chapterNav = String(_currentChapter + 1) + "/" + String(_epubParser.getChapterCount());
-    int navW = M5.Display.textWidth(chapterNav.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - navW, 15);
-    M5.Display.print(chapterNav);
 
     M5.Display.drawLine(PAD_X, HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, HEADER_HEIGHT - 1, TFT_BLACK);
 }
@@ -473,6 +486,9 @@ void ReadScreen::drawReadingContent() {
     int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT;
 
     M5.Display.fillRect(0, HEADER_HEIGHT, SCREEN_WIDTH, contentH, TFT_WHITE);
+
+    // Clear text layout for new page
+    _textLayout.clear();
 
     if (_currentPage >= _totalPages || _pageBreaks.empty()) {
         return;
@@ -527,6 +543,16 @@ void ReadScreen::drawReadingContent() {
             if (lineEnd == bytePos) lineEnd += 1;
 
             String lineText = para.substring(bytePos, lineEnd);
+            int lineWidth = useCustomFont ? fm.getTextWidth(lineText) : M5.Display.textWidth(lineText.c_str());
+
+            // Record line position for text selection
+            _textLayout.addLine(i, bytePos, lineEnd, PAD_X, y, lineWidth, fontH + lineSpacing, lineText);
+
+            // Draw highlight if this line contains selection
+            if (_textLayout.hasSelection()) {
+                _textLayout.drawHighlight();
+            }
+
             if (useCustomFont) {
                 fm.drawString(lineText, PAD_X, y);
             } else {
@@ -539,6 +565,11 @@ void ReadScreen::drawReadingContent() {
         }
 
         y += paraSpacing - lineSpacing;
+    }
+
+    // Draw popup menu if visible
+    if (_popupMenu.isVisible()) {
+        _popupMenu.draw();
     }
 }
 
@@ -591,17 +622,48 @@ void ReadScreen::drawReadingNavigation() {
 
 bool ReadScreen::handleReadingTouch(int x, int y) {
     int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    int navY = availableHeight - NAV_HEIGHT;
+    int contentY = HEADER_HEIGHT;
 
-    // Header touch - back button
-    if (y < HEADER_HEIGHT && x < 150) {
-        closeBook();
+    // Handle popup menu touch first
+    if (_popupMenu.isVisible()) {
+        PopupMenu::Action action = _popupMenu.handleTouch(x, y);
+        if (action != PopupMenu::NONE) {
+            handlePopupAction(action);
+            return true;
+        }
+    }
+
+    // Header touch
+    if (y < HEADER_HEIGHT) {
+        // Back button (left side)
+        if (x < 150) {
+            closeBook();
+            return true;
+        }
+        // TOC button (right side, around x=750-850)
+        if (x > SCREEN_WIDTH - 200 && x < SCREEN_WIDTH - 80) {
+            _chapterListScroll = (_currentChapter / CHAPTERS_PER_PAGE) * CHAPTERS_PER_PAGE;
+            _mode = Mode::ChapterList;
+            requestRedraw();
+            return true;
+        }
+    }
+
+    // Content area touch - text selection
+    if (y >= contentY && y < navY) {
+        handleWordSelection(x, y);
         return true;
     }
 
-    int navY = availableHeight - NAV_HEIGHT;
-
     // Navigation area
     if (y >= navY && y < availableHeight) {
+        // Clear any selection when navigating
+        if (_textLayout.hasSelection()) {
+            _textLayout.clearSelection();
+            _popupMenu.hide();
+        }
+
         // Left - previous
         if (x < SCREEN_WIDTH / 3) {
             if (_currentPage > 0) {
@@ -634,6 +696,93 @@ bool ReadScreen::handleReadingTouch(int x, int y) {
     }
 
     return false;
+}
+
+void ReadScreen::handleWordSelection(int x, int y) {
+    WordInfo word;
+
+    if (_textLayout.findWordAt(x, y, word)) {
+        // Set selection
+        _textLayout.setSelection(word);
+
+        // Show popup menu above the word
+        int popupX = word.x + word.width / 2;
+        int popupY = word.y;
+        _popupMenu.show(popupX, popupY, word.text);
+
+        // Redraw to show highlight and popup
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
+        drawReadingContent();
+        M5.Display.endWrite();
+
+        Serial.printf("Selected word: '%s'\n", word.text.c_str());
+    } else {
+        // Touch on empty area - clear selection
+        if (_textLayout.hasSelection() || _popupMenu.isVisible()) {
+            _textLayout.clearSelection();
+            _popupMenu.hide();
+
+            // Redraw to remove highlight
+            M5.Display.setEpdMode(epd_mode_t::epd_fast);
+            M5.Display.startWrite();
+            drawReadingContent();
+            M5.Display.endWrite();
+        }
+    }
+}
+
+void ReadScreen::handlePopupAction(PopupMenu::Action action) {
+    String selectedText = _popupMenu.getSelectedText();
+
+    switch (action) {
+        case PopupMenu::SEARCH:
+            // TODO: Phase 4 - Dictionary search
+            Serial.printf("Search: %s\n", selectedText.c_str());
+            break;
+
+        case PopupMenu::SAVE:
+            saveToVocabulary(selectedText);
+            Serial.printf("Saved to vocabulary: %s\n", selectedText.c_str());
+            break;
+
+        case PopupMenu::GRAMMAR:
+            saveToGrammar(selectedText);
+            Serial.printf("Saved to grammar: %s\n", selectedText.c_str());
+            break;
+
+        case PopupMenu::CANCEL:
+        default:
+            break;
+    }
+
+    // Clear selection and hide popup
+    _textLayout.clearSelection();
+    _popupMenu.hide();
+
+    // Redraw
+    M5.Display.setEpdMode(epd_mode_t::epd_fast);
+    M5.Display.startWrite();
+    drawReadingContent();
+    M5.Display.endWrite();
+}
+
+void ReadScreen::saveToVocabulary(const String& word) {
+    // Save word to vocabulary file in LittleFS
+    File file = LittleFS.open("/userdata/vocabulary.txt", FILE_APPEND);
+    if (file) {
+        file.println(word);
+        file.close();
+    }
+}
+
+void ReadScreen::saveToGrammar(const String& text) {
+    // Save text to grammar patterns file in LittleFS
+    File file = LittleFS.open("/userdata/grammar.txt", FILE_APPEND);
+    if (file) {
+        file.println(text);
+        file.close();
+    }
 }
 
 void ReadScreen::closeBook() {
@@ -669,9 +818,211 @@ bool ReadScreen::handleTouchStart(int x, int y) {
         return false;
     }
 
-    if (_mode == Mode::BookSelection) {
-        return handleBookSelectionTouch(x, y);
-    } else {
-        return handleReadingTouch(x, y);
+    switch (_mode) {
+        case Mode::BookSelection:
+            return handleBookSelectionTouch(x, y);
+        case Mode::ChapterList:
+            return handleChapterListTouch(x, y);
+        case Mode::Reading:
+            return handleReadingTouch(x, y);
     }
+    return false;
+}
+
+// ============================================
+// Chapter List Mode
+// ============================================
+void ReadScreen::drawChapterList() {
+    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+
+    // Clear screen
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, availableHeight, TFT_WHITE);
+
+    M5.Display.setFont(&fonts::efontJA_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    int fontH = M5.Display.fontHeight();
+
+    // Header with book title and back button
+    M5.Display.fillRect(0, 0, SCREEN_WIDTH, HEADER_HEIGHT, TFT_WHITE);
+    M5.Display.drawLine(PAD_X, HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, HEADER_HEIGHT - 1, TFT_BLACK);
+
+    // Back button (left)
+    M5.Display.setCursor(PAD_X, (HEADER_HEIGHT - fontH) / 2);
+    M5.Display.print("< 뒤로");
+
+    // Title (center)
+    String title = "목차";
+    if (_epubParser.isOpen()) {
+        const EpubMetadata& meta = _epubParser.getMetadata();
+        if (meta.title.length() > 0) {
+            title = meta.title;
+            // Truncate if too long
+            if (M5.Display.textWidth(title.c_str()) > 600) {
+                while (M5.Display.textWidth(title.c_str()) > 550 && title.length() > 10) {
+                    title = title.substring(0, title.length() - 4) + "...";
+                }
+            }
+        }
+    }
+    int titleW = M5.Display.textWidth(title.c_str());
+    M5.Display.setCursor((SCREEN_WIDTH - titleW) / 2, (HEADER_HEIGHT - fontH) / 2);
+    M5.Display.print(title);
+
+    // Chapter list area
+    int listY = HEADER_HEIGHT + 10;
+    int listH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - 20;
+    int itemH = 60;  // Height per chapter item
+
+    int totalChapters = _epubParser.getChapterCount();
+    int maxScroll = max(0, totalChapters - CHAPTERS_PER_PAGE);
+    _chapterListScroll = constrain(_chapterListScroll, 0, maxScroll);
+
+    const auto& chapters = _epubParser.getChapters();
+
+    for (int i = 0; i < CHAPTERS_PER_PAGE; i++) {
+        int chapterIdx = _chapterListScroll + i;
+        if (chapterIdx >= totalChapters) break;
+
+        int itemY = listY + i * itemH;
+
+        // Highlight current chapter
+        if (chapterIdx == _currentChapter) {
+            M5.Display.fillRect(PAD_X - 5, itemY, SCREEN_WIDTH - PAD_X * 2 + 10, itemH - 5, TFT_LIGHTGRAY);
+        }
+
+        // Chapter number
+        M5.Display.setTextColor(TFT_DARKGRAY);
+        M5.Display.setCursor(PAD_X, itemY + 10);
+        M5.Display.printf("%d.", chapterIdx + 1);
+
+        // Chapter title
+        M5.Display.setTextColor(TFT_BLACK);
+        String chTitle = chapters[chapterIdx].title;
+        if (chTitle.length() == 0 || chTitle.startsWith("Chapter ")) {
+            // Try to get first line of content as title
+            String text = _epubParser.getChapterText(chapterIdx);
+            if (text.length() > 0) {
+                int newline = text.indexOf('\n');
+                if (newline > 0 && newline < 80) {
+                    chTitle = text.substring(0, newline);
+                    chTitle.trim();
+                } else if (text.length() < 80) {
+                    chTitle = text;
+                    chTitle.trim();
+                }
+            }
+            if (chTitle.length() == 0) {
+                chTitle = "Chapter " + String(chapterIdx + 1);
+            }
+        }
+
+        // Truncate long titles
+        int maxTitleW = SCREEN_WIDTH - PAD_X * 2 - 80;
+        while (M5.Display.textWidth(chTitle.c_str()) > maxTitleW && chTitle.length() > 10) {
+            chTitle = chTitle.substring(0, chTitle.length() - 4) + "...";
+        }
+
+        M5.Display.setCursor(PAD_X + 60, itemY + 10);
+        M5.Display.print(chTitle);
+
+        // Separator line
+        M5.Display.drawLine(PAD_X, itemY + itemH - 8, SCREEN_WIDTH - PAD_X, itemY + itemH - 8, TFT_LIGHTGRAY);
+    }
+
+    // Navigation (scroll indicators)
+    int navY = availableHeight - NAV_HEIGHT;
+    M5.Display.fillRect(0, navY, SCREEN_WIDTH, NAV_HEIGHT, TFT_WHITE);
+    M5.Display.drawLine(PAD_X, navY, SCREEN_WIDTH - PAD_X, navY, TFT_LIGHTGRAY);
+
+    M5.Display.setTextColor(TFT_BLACK);
+    int navTextY = navY + (NAV_HEIGHT - fontH) / 2;
+
+    // Previous page indicator
+    if (_chapterListScroll > 0) {
+        M5.Display.setCursor(PAD_X + 20, navTextY);
+        M5.Display.print("< 이전");
+    }
+
+    // Page info
+    int startNum = _chapterListScroll + 1;
+    int endNum = min(_chapterListScroll + CHAPTERS_PER_PAGE, totalChapters);
+    String pageInfo = String(startNum) + "-" + String(endNum) + " / " + String(totalChapters);
+    int pageInfoW = M5.Display.textWidth(pageInfo.c_str());
+    M5.Display.setTextColor(TFT_DARKGRAY);
+    M5.Display.setCursor((SCREEN_WIDTH - pageInfoW) / 2, navTextY);
+    M5.Display.print(pageInfo);
+
+    // Next page indicator
+    if (_chapterListScroll + CHAPTERS_PER_PAGE < totalChapters) {
+        M5.Display.setTextColor(TFT_BLACK);
+        String nextText = "다음 >";
+        int nextW = M5.Display.textWidth(nextText.c_str());
+        M5.Display.setCursor(SCREEN_WIDTH - PAD_X - nextW - 20, navTextY);
+        M5.Display.print(nextText);
+    }
+}
+
+bool ReadScreen::handleChapterListTouch(int x, int y) {
+    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
+    int navY = availableHeight - NAV_HEIGHT;
+    int listY = HEADER_HEIGHT + 10;
+    int itemH = 60;
+
+    // Back button (header area, left side)
+    if (y < HEADER_HEIGHT && x < 150) {
+        _mode = Mode::Reading;
+        requestRedraw();
+        return true;
+    }
+
+    // Navigation area
+    if (y >= navY) {
+        int totalChapters = _epubParser.getChapterCount();
+
+        // Previous
+        if (x < SCREEN_WIDTH / 3 && _chapterListScroll > 0) {
+            _chapterListScroll -= CHAPTERS_PER_PAGE;
+            if (_chapterListScroll < 0) _chapterListScroll = 0;
+            requestRedraw();
+            return true;
+        }
+        // Next
+        else if (x > SCREEN_WIDTH * 2 / 3 && _chapterListScroll + CHAPTERS_PER_PAGE < totalChapters) {
+            _chapterListScroll += CHAPTERS_PER_PAGE;
+            requestRedraw();
+            return true;
+        }
+        return false;
+    }
+
+    // Chapter item selection
+    if (y >= listY && y < navY) {
+        int itemIndex = (y - listY) / itemH;
+        int chapterIdx = _chapterListScroll + itemIndex;
+
+        if (chapterIdx >= 0 && chapterIdx < _epubParser.getChapterCount()) {
+            goToChapter(chapterIdx);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void ReadScreen::goToChapter(int chapterIndex) {
+    if (chapterIndex < 0 || chapterIndex >= _epubParser.getChapterCount()) {
+        return;
+    }
+
+    _currentChapter = chapterIndex;
+    _currentPage = 0;
+    loadChapter(_currentChapter);
+    saveProgress();
+
+    _mode = Mode::Reading;
+    requestRedraw();
+
+    Serial.printf("ReadScreen: Jumped to chapter %d\n", chapterIndex);
 }

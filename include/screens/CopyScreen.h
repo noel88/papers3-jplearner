@@ -3,13 +3,27 @@
 #include "BaseScreen.h"
 #include "Config.h"
 #include "EpubParser.h"
+#include "TextLayout.h"
+#include "PopupMenu.h"
 #include <vector>
+
+/**
+ * Reading mode for EPUB content
+ */
+enum class ReadingMode {
+    DAILY,       // Date-based: Day N = Chapter offset + N - 1
+    SEQUENTIAL   // Progress-based: Continue from last read chapter
+};
 
 /**
  * 필사 (Copy/Transcription) Screen
  *
  * Displays daily content from EPUB or 365.txt file.
  * Uses page-based navigation instead of scroll for e-ink optimization.
+ *
+ * Reading Modes:
+ * - DAILY: Auto-detected when chapters have date patterns (1月1日, Day 1)
+ * - SEQUENTIAL: Fallback when no date pattern found, tracks reading progress
  *
  * Content Source Priority:
  * 1. EPUB file matching config.dailyEpub in /books/
@@ -55,6 +69,13 @@ private:
     // EPUB support
     EpubParser _epubParser;
     String _epubPath;
+    int _chapterOffset;       // Offset for first content chapter
+    ReadingMode _readingMode; // Daily or Sequential
+    int _currentChapter;      // Current chapter index (for Sequential mode)
+
+    // Text selection
+    TextLayout _textLayout;
+    PopupMenu _popupMenu;
 
     // Drawing methods
     void drawHeader();
@@ -71,4 +92,13 @@ private:
     bool loadFromTextFile(int dayOfYear);
     String findEpubFile();
     void parseChapterContent(const String& text);
+    int detectChapterOffset();   // Find offset, sets _readingMode
+    void loadReadingProgress();  // Load saved chapter/page for Sequential
+    void saveReadingProgress();  // Save current chapter/page
+
+    // Text selection helpers
+    void handleWordSelection(int x, int y);
+    void handlePopupAction(PopupMenu::Action action);
+    void saveToVocabulary(const String& word);
+    void saveToGrammar(const String& text);
 };

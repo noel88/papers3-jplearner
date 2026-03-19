@@ -2,6 +2,8 @@
 
 #include "BaseScreen.h"
 #include "EpubParser.h"
+#include "TextLayout.h"
+#include "PopupMenu.h"
 #include <vector>
 
 /**
@@ -51,6 +53,7 @@ private:
     // ============================================
     enum class Mode {
         BookSelection,
+        ChapterList,
         Reading
     };
 
@@ -61,6 +64,10 @@ private:
     int _selectedBookIndex;
     int _gridScrollOffset;
 
+    // Chapter list state
+    int _chapterListScroll;
+    static constexpr int CHAPTERS_PER_PAGE = 8;
+
     // Reading state
     EpubParser _epubParser;
     String _currentBookPath;
@@ -70,6 +77,10 @@ private:
     std::vector<String> _paragraphs;
     std::vector<int> _pageBreaks;
 
+    // Text selection
+    TextLayout _textLayout;
+    PopupMenu _popupMenu;
+
     // ============================================
     // Book Selection Mode
     // ============================================
@@ -77,6 +88,13 @@ private:
     void drawBookSelection();
     bool handleBookSelectionTouch(int x, int y);
     void openBook(int index);
+
+    // ============================================
+    // Chapter List Mode
+    // ============================================
+    void drawChapterList();
+    bool handleChapterListTouch(int x, int y);
+    void goToChapter(int chapterIndex);
 
     // ============================================
     // Reading Mode
@@ -109,4 +127,10 @@ private:
     static constexpr int HEADER_HEIGHT = 50;
     static constexpr int NAV_HEIGHT = 50;
     static constexpr int TAB_BAR_HEIGHT = 60;
+
+    // Text selection helpers
+    void handleWordSelection(int x, int y);
+    void handlePopupAction(PopupMenu::Action action);
+    void saveToVocabulary(const String& word);
+    void saveToGrammar(const String& text);
 };

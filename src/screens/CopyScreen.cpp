@@ -37,6 +37,16 @@ void CopyScreen::onEnter() {
         fm.setFontSize(config.fontSizePt);
     }
 
+    // Configure content renderer
+    ContentRenderer::Config renderConfig;
+    renderConfig.headerHeight = HEADER_HEIGHT;
+    renderConfig.navHeight = NAV_HEIGHT;
+    renderConfig.tabBarHeight = TAB_BAR_HEIGHT;
+    renderConfig.lineSpacing = LINE_SPACING;
+    renderConfig.paragraphSpacing = PARAGRAPH_SPACING;
+    renderConfig.fontSizePt = config.fontSizePt;
+    _contentRenderer.setConfig(renderConfig);
+
     // Reload content when entering screen
     loadTodayContent();
 }
@@ -419,52 +429,7 @@ bool CopyScreen::loadFromTextFile(int dayOfYear) {
 }
 
 void CopyScreen::calculatePages() {
-    _pageBreaks.clear();
-    _pageBreaks.push_back(0);  // First page starts at paragraph 0
-
-    if (_paragraphs.empty()) {
-        _totalPages = 0;
-        return;
-    }
-
-    FontManager& fm = FontManager::instance();
-    int fontH;
-
-    if (fm.hasCustomFont()) {
-        fontH = config.fontSizePt + 4;  // Custom font height
-    } else {
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        fontH = M5.Display.fontHeight();
-    }
-
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;  // Area above tab bar
-    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - PAD_Y * 3;  // Extra padding
-
-    int currentHeight = 0;
-    int paraIndex = 0;
-
-    while (paraIndex < _paragraphs.size()) {
-        const String& para = _paragraphs[paraIndex];
-
-        // Calculate wrapped height for this paragraph
-        int paraWidth = M5.Display.textWidth(para.c_str());
-        int lines = (paraWidth / contentW) + 1;
-        int paraHeight = lines * (fontH + LINE_SPACING) + PARAGRAPH_SPACING;
-
-        if (currentHeight + paraHeight > contentH && currentHeight > 0) {
-            // Start a new page
-            _pageBreaks.push_back(paraIndex);
-            currentHeight = paraHeight;
-        } else {
-            currentHeight += paraHeight;
-        }
-
-        paraIndex++;
-    }
-
-    _totalPages = _pageBreaks.size();
+    _totalPages = _contentRenderer.calculatePages(_paragraphs, _pageBreaks);
 }
 
 void CopyScreen::drawHeader() {
@@ -518,100 +483,11 @@ void CopyScreen::drawHeader() {
 }
 
 void CopyScreen::drawPageContent() {
-    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
-    int contentY = HEADER_HEIGHT + PAD_Y;
-    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT;
-
-    // Clear content area
-    M5.Display.fillRect(0, HEADER_HEIGHT, SCREEN_WIDTH, contentH, TFT_WHITE);
-
-    // Clear text layout for new page
-    _textLayout.clear();
-
-    if (_currentPage >= _totalPages || _pageBreaks.empty()) {
-        return;
-    }
-
-    FontManager& fm = FontManager::instance();
-    bool useCustomFont = fm.hasCustomFont();
-
-    int fontH;
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-
-    if (useCustomFont) {
-        fm.setFontSize(config.fontSizePt);
-        fontH = config.fontSizePt + 4;  // Approximate height
-    } else {
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        fontH = M5.Display.fontHeight();
-    }
-    M5.Display.setTextColor(TFT_BLACK);
-
-    int maxY = availableHeight - NAV_HEIGHT - PAD_Y * 2;  // Extra padding above nav buttons
-
-    int startPara = _pageBreaks[_currentPage];
-    int endPara = (_currentPage + 1 < _totalPages) ? _pageBreaks[_currentPage + 1] : _paragraphs.size();
-
-    int y = contentY;
-
-    for (int i = startPara; i < endPara && y < maxY; i++) {
-        const String& para = _paragraphs[i];
-
-        // Draw wrapped text
-        int bytePos = 0;
-        int byteLen = para.length();
-
-        while (bytePos < byteLen && y < maxY) {
-            int lineEnd = bytePos;
-
-            // Find line break point
-            while (lineEnd < byteLen) {
-                int charLen = 1;
-                uint8_t c = para[lineEnd];
-                if (c >= 0xF0) charLen = 4;
-                else if (c >= 0xE0) charLen = 3;
-                else if (c >= 0xC0) charLen = 2;
-
-                String sub = para.substring(bytePos, lineEnd + charLen);
-                int textW = useCustomFont ? fm.getTextWidth(sub) : M5.Display.textWidth(sub.c_str());
-                if (textW > contentW) break;
-
-                lineEnd += charLen;
-            }
-
-            if (lineEnd == bytePos) lineEnd += 1;
-
-            String lineText = para.substring(bytePos, lineEnd);
-            int lineWidth = useCustomFont ? fm.getTextWidth(lineText) : M5.Display.textWidth(lineText.c_str());
-
-            // Record line position for text selection
-            _textLayout.addLine(i, bytePos, lineEnd, PAD_X, y, lineWidth, fontH + LINE_SPACING, lineText);
-
-            // Draw this line
-            if (useCustomFont) {
-                fm.drawString(lineText, PAD_X, y);
-            } else {
-                M5.Display.setCursor(PAD_X, y);
-                M5.Display.print(lineText);
-            }
-
-            bytePos = lineEnd;
-            y += fontH + LINE_SPACING;
-        }
-
-        y += PARAGRAPH_SPACING - LINE_SPACING;  // Extra space between paragraphs
-    }
-
-    // Draw selection highlight on top of text (inverted style)
-    if (_textLayout.hasSelection()) {
-        _textLayout.drawHighlight();
-    }
-
-    // Draw popup menu if visible (on top of everything)
-    if (_popupMenu.isVisible()) {
-        _popupMenu.draw();
-    }
+    _contentRenderer.renderPage(
+        _paragraphs, _pageBreaks,
+        _currentPage, _totalPages,
+        _textLayout, _popupMenu
+    );
 }
 
 void CopyScreen::drawNavigation() {

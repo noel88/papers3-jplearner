@@ -38,6 +38,9 @@ public:
     // Clear all recorded positions
     void clear();
 
+    // Reserve space for expected number of lines
+    void reserve(int expectedLines) { _lines.reserve(expectedLines); }
+
     // Record a line during rendering
     void addLine(int paraIndex, int byteStart, int byteEnd,
                  int x, int y, int width, int height,

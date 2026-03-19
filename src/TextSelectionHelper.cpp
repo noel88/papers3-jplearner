@@ -30,6 +30,7 @@ bool TextSelectionHelper::handleAction(PopupMenu::Action action, const String& s
 void TextSelectionHelper::closeDictionary() {
     _showingDictionary = false;
     _dictResults.clear();
+    _dictResults.shrink_to_fit();  // Release memory
 }
 
 bool TextSelectionHelper::handleDictionaryTouch() {
@@ -201,13 +202,21 @@ void TextSelectionHelper::drawDictionaryEntry(const DictEntry& entry, int y) {
     M5.Display.setTextColor(TFT_BLACK);
     M5.Display.setCursor(contentX, y + 25);
 
-    // Truncate if too long
+    // Truncate if too long using binary search
     String meaning = entry.meanings;
+    int maxW = contentW - M5.Display.textWidth("...");
     if (M5.Display.textWidth(meaning.c_str()) > contentW) {
-        while (meaning.length() > 0 && M5.Display.textWidth((meaning + "...").c_str()) > contentW) {
-            meaning = meaning.substring(0, meaning.length() - 1);
+        // Binary search for truncation point
+        int lo = 0, hi = meaning.length();
+        while (lo < hi) {
+            int mid = (lo + hi + 1) / 2;
+            if (M5.Display.textWidth(meaning.substring(0, mid).c_str()) <= maxW) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
         }
-        meaning += "...";
+        meaning = meaning.substring(0, lo) + "...";
     }
     M5.Display.print(meaning);
 }

@@ -5,6 +5,7 @@
 #include "TextLayout.h"
 #include "PopupMenu.h"
 #include "TextSelectionHelper.h"
+#include "ContentRenderer.h"
 #include <vector>
 
 /**
@@ -82,6 +83,9 @@ private:
     TextLayout _textLayout;
     PopupMenu _popupMenu;
     TextSelectionHelper _selectionHelper;
+
+    // Content rendering
+    ContentRenderer _contentRenderer;
 
     // ============================================
     // Book Selection Mode

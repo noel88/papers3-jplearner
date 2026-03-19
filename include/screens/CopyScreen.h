@@ -6,6 +6,7 @@
 #include "TextLayout.h"
 #include "PopupMenu.h"
 #include "TextSelectionHelper.h"
+#include "ContentRenderer.h"
 #include <vector>
 
 /**
@@ -79,6 +80,9 @@ private:
     // Text selection
     TextLayout _textLayout;
     PopupMenu _popupMenu;
+
+    // Content rendering
+    ContentRenderer _contentRenderer;
 
     // Touch tracking for long press and drag selection
     int _touchStartX;

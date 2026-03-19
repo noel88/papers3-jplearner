@@ -15,16 +15,7 @@ void TextLayout::clear() {
 void TextLayout::addLine(int paraIndex, int byteStart, int byteEnd,
                          int x, int y, int width, int height,
                          const String& text) {
-    LineInfo line;
-    line.paraIndex = paraIndex;
-    line.byteStart = byteStart;
-    line.byteEnd = byteEnd;
-    line.x = x;
-    line.y = y;
-    line.width = width;
-    line.height = height;
-    line.text = text;
-    _lines.push_back(line);
+    _lines.emplace_back(LineInfo{paraIndex, byteStart, byteEnd, x, y, width, height, text});
 }
 
 bool TextLayout::findWordAt(int touchX, int touchY, WordInfo& wordInfo) {

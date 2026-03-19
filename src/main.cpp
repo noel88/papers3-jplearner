@@ -899,23 +899,29 @@ void loop() {
     updateBattery();
 
     // Handle power button (side button)
-    // Single click: Toggle WiFi mode
-    // Double click: Deep sleep
-    if (M5.BtnPWR.wasClicked()) {
+    // Single click: Deep sleep
+    // Double click: Full refresh (clear ghosting)
+    // Long press: Toggle WiFi mode
+    if (M5.BtnPWR.wasHold()) {
+        // Long press - Toggle WiFi mode
+        if (wifiMode) {
+            stopWiFiMode();
+            copyScreen.loadTodayContent();
+            needsFullRedraw = true;
+        } else {
+            startWiFiMode();
+        }
+        sleepMgr.resetActivity();
+    } else if (M5.BtnPWR.wasClicked()) {
         int clickCount = M5.BtnPWR.getClickCount();
 
         if (clickCount == 1) {
-            // Single click - Toggle WiFi mode
-            if (wifiMode) {
-                stopWiFiMode();
-                copyScreen.loadTodayContent();
-                needsFullRedraw = true;
-            } else {
-                startWiFiMode();
-            }
-        } else if (clickCount >= 2) {
-            // Double click - Deep sleep
+            // Single click - Deep sleep
             sleepMgr.enterSleep();
+        } else if (clickCount >= 2) {
+            // Double click - Force full refresh to clear ghosting
+            forceFullClear = true;
+            needsFullRedraw = true;
         }
 
         sleepMgr.resetActivity();

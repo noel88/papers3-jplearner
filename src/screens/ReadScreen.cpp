@@ -516,8 +516,9 @@ bool ReadScreen::handleReadingTouch(int x, int y) {
         PopupMenu::Action action = _popupMenu.handleTouch(x, y);
         if (action != PopupMenu::NONE) {
             handlePopupAction(action);
-            return true;
         }
+        // Always consume touch when popup is visible
+        return true;
     }
 
     // Header touch

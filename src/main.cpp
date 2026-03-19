@@ -898,6 +898,29 @@ void loop() {
 
     updateBattery();
 
+    // Handle power button (side button)
+    // Single click: Toggle WiFi mode
+    // Double click: Deep sleep
+    if (M5.BtnPWR.wasClicked()) {
+        int clickCount = M5.BtnPWR.getClickCount();
+
+        if (clickCount == 1) {
+            // Single click - Toggle WiFi mode
+            if (wifiMode) {
+                stopWiFiMode();
+                copyScreen.loadTodayContent();
+                needsFullRedraw = true;
+            } else {
+                startWiFiMode();
+            }
+        } else if (clickCount >= 2) {
+            // Double click - Deep sleep
+            sleepMgr.enterSleep();
+        }
+
+        sleepMgr.resetActivity();
+    }
+
     auto touch = M5.Touch.getDetail();
 
     // WiFi mode handling

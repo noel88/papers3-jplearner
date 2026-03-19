@@ -321,38 +321,57 @@ void TextLayout::drawHighlight() {
     if (!_hasSelection) return;
 
     int padding = 2;
+    int selEndY = _selection.y + _selection.height;
 
-    // For multi-line selection, highlight each line separately
+    // Check if single line selection (height matches typical line height)
+    bool isSingleLine = (_selection.height <= 40);  // Single line is ~32px
+
+    if (isSingleLine) {
+        // Simple single-word/single-line highlight
+        M5.Display.fillRect(
+            _selection.x - padding,
+            _selection.y - 2,
+            _selection.width + padding * 2,
+            _selection.height,
+            TFT_BLACK
+        );
+
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.setFont(&fonts::efontJA_24);
+        M5.Display.setTextSize(1.0);
+        M5.Display.setCursor(_selection.x, _selection.y);
+        M5.Display.print(_selection.text);
+        M5.Display.setTextColor(TFT_BLACK);
+        return;
+    }
+
+    // Multi-line selection - highlight each line
     for (const auto& line : _lines) {
         int lineY = line.y;
+        int lineEndY = lineY + line.height;
 
-        // Skip lines outside selection
-        if (lineY + line.height <= _selection.y) continue;
-        if (lineY > _selection.y + _selection.height) break;
+        // Skip lines before selection
+        if (lineEndY <= _selection.y) continue;
+        // Stop after selection
+        if (lineY >= selEndY) break;
 
-        // Calculate highlight bounds for this line
         int hlX, hlW;
         String hlText;
 
-        if (lineY == _selection.y && _selection.height <= line.height) {
-            // Single line selection
+        // First line of selection
+        if (lineY <= _selection.y && lineEndY > _selection.y) {
             hlX = _selection.x;
-            hlW = _selection.width;
-            hlText = _selection.text;
-        } else if (lineY == _selection.y) {
-            // First line of multi-line
-            hlX = _selection.x;
-            hlW = line.x + line.width - _selection.x;
-            hlText = extractTextInRange(line, hlX, hlX + hlW);
-        } else if (lineY + line.height >= _selection.y + _selection.height) {
-            // Last line of multi-line
+            hlW = line.x + line.width - hlX;
+            hlText = extractTextInRange(line, hlX, line.x + line.width);
+        }
+        // Last line of selection
+        else if (lineY < selEndY && lineEndY >= selEndY) {
             hlX = line.x;
-            int endX = _selection.x + _selection.width;
-            if (endX > line.x + line.width) endX = line.x + line.width;
-            hlW = endX - hlX;
-            hlText = extractTextInRange(line, hlX, endX);
-        } else {
-            // Middle line - full width
+            hlW = _selection.width;  // Approximate
+            hlText = extractTextInRange(line, hlX, hlX + hlW);
+        }
+        // Middle line
+        else {
             hlX = line.x;
             hlW = line.width;
             hlText = line.text;
@@ -360,10 +379,8 @@ void TextLayout::drawHighlight() {
 
         if (hlW <= 0) continue;
 
-        // Draw black background
         M5.Display.fillRect(hlX - padding, lineY - 2, hlW + padding * 2, line.height, TFT_BLACK);
 
-        // Draw white text on top
         M5.Display.setTextColor(TFT_WHITE);
         M5.Display.setFont(&fonts::efontJA_24);
         M5.Display.setTextSize(1.0);

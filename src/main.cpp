@@ -21,6 +21,7 @@
 #include "UIHelpers.h"
 #include "SleepManager.h"
 #include "SRSManager.h"
+#include "DictionaryManager.h"
 
 // ============================================
 // Hardware Configuration
@@ -833,6 +834,9 @@ void setup() {
 
     // Initialize SRS system
     SRSManager::instance().init();
+
+    // Initialize Dictionary (optional - fails gracefully if dict files not present)
+    DictionaryManager::instance().init();
 
     // Draw initial screen
     needsFullRedraw = true;

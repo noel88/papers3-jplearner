@@ -64,6 +64,7 @@ struct Config {
 
     // System settings
     int sleepMinutes = 5;
+    int fullRefreshSec = 60;  // Full e-ink refresh interval (0 = disable auto)
 
     // WiFi AP settings (for file transfer)
     String apSsid = "Papers3-JP";

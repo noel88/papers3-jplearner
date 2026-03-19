@@ -204,6 +204,7 @@ bool loadConfig() {
     config.fallbackFont = doc["display"]["fallbackFont"] | "";
     config.fontSizePt = doc["display"]["fontSizePt"] | 24;
     config.sleepMinutes = doc["system"]["sleepMinutes"] | 5;
+    config.fullRefreshSec = doc["system"]["fullRefreshSec"] | 60;
     config.apSsid = doc["wifi"]["ap"]["ssid"] | "Papers3-JP";
     config.apPassword = doc["wifi"]["ap"]["password"] | "12345678";
     config.staSsid = doc["wifi"]["station"]["ssid"] | "";
@@ -227,6 +228,7 @@ bool saveConfig() {
     doc["display"]["fallbackFont"] = config.fallbackFont;
     doc["display"]["fontSizePt"] = config.fontSizePt;
     doc["system"]["sleepMinutes"] = config.sleepMinutes;
+    doc["system"]["fullRefreshSec"] = config.fullRefreshSec;
     doc["wifi"]["ap"]["ssid"] = config.apSsid;
     doc["wifi"]["ap"]["password"] = config.apPassword;
     doc["wifi"]["station"]["ssid"] = config.staSsid;
@@ -683,7 +685,6 @@ int handleReviewPromptTouch(int x, int y) {
 // Display Refresh
 // ============================================
 unsigned long lastFullClearTime = 0;
-const unsigned long FULL_CLEAR_INTERVAL_MS = 30000;  // 30 seconds between full clears
 bool forceFullClear = true;  // Force on first refresh
 
 void refreshDisplay() {
@@ -691,7 +692,8 @@ void refreshDisplay() {
         unsigned long now = millis();
 
         // Full clear only after enough time has passed (reduces flicker)
-        if (forceFullClear || (now - lastFullClearTime >= FULL_CLEAR_INTERVAL_MS)) {
+        unsigned long fullRefreshMs = config.fullRefreshSec * 1000UL;
+        if (forceFullClear || (fullRefreshMs > 0 && (now - lastFullClearTime >= fullRefreshMs))) {
             // Use quality mode for full clear
             M5.Display.setEpdMode(epd_mode_t::epd_quality);
             M5.Display.fillScreen(TFT_BLACK);

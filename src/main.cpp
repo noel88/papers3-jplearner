@@ -90,6 +90,10 @@ int batteryPercent = 100;
 unsigned long lastBatteryCheck = 0;
 const unsigned long BATTERY_CHECK_INTERVAL = 60000;
 
+// Review prompt state
+bool showingReviewPrompt = false;
+int reviewPromptDueCount = 0;
+
 // ============================================
 // SD Card Functions
 // ============================================
@@ -582,6 +586,98 @@ void stopWiFiMode() {
 }
 
 // ============================================
+// Review Prompt Dialog
+// ============================================
+void drawReviewPromptDialog(int dueCount) {
+    // Dialog dimensions
+    int dialogW = 400;
+    int dialogH = 200;
+    int dialogX = (SCREEN_WIDTH - dialogW) / 2;
+    int dialogY = (SCREEN_HEIGHT - dialogH) / 2;
+
+    // Draw dialog background with border
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillRect(dialogX, dialogY, dialogW, dialogH, TFT_WHITE);
+    M5.Display.drawRect(dialogX, dialogY, dialogW, dialogH, TFT_BLACK);
+    M5.Display.drawRect(dialogX + 1, dialogY + 1, dialogW - 2, dialogH - 2, TFT_BLACK);
+
+    // Title
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+    String title = "복습할 카드가 있어요!";
+    int titleW = M5.Display.textWidth(title.c_str());
+    M5.Display.setCursor(dialogX + (dialogW - titleW) / 2, dialogY + 30);
+    M5.Display.print(title);
+
+    // Message
+    M5.Display.setFont(&fonts::efontKR_16);
+    String message = String(dueCount) + "장의 카드가 대기 중입니다.";
+    int msgW = M5.Display.textWidth(message.c_str());
+    M5.Display.setCursor(dialogX + (dialogW - msgW) / 2, dialogY + 70);
+    M5.Display.print(message);
+
+    // Buttons
+    int btnW = 120;
+    int btnH = 45;
+    int btnY = dialogY + dialogH - btnH - 25;
+    int btnGap = 30;
+
+    // Skip button (left)
+    int skipBtnX = dialogX + (dialogW - 2 * btnW - btnGap) / 2;
+    M5.Display.fillRoundRect(skipBtnX, btnY, btnW, btnH, 6, TFT_WHITE);
+    M5.Display.drawRoundRect(skipBtnX, btnY, btnW, btnH, 6, TFT_DARKGRAY);
+
+    M5.Display.setFont(&fonts::efontKR_16);
+    M5.Display.setTextColor(TFT_DARKGRAY);
+    String skipText = "나중에";
+    int skipTextW = M5.Display.textWidth(skipText.c_str());
+    M5.Display.setCursor(skipBtnX + (btnW - skipTextW) / 2, btnY + (btnH - 16) / 2);
+    M5.Display.print(skipText);
+
+    // Start button (right)
+    int startBtnX = skipBtnX + btnW + btnGap;
+    M5.Display.fillRoundRect(startBtnX, btnY, btnW, btnH, 6, TFT_BLACK);
+    M5.Display.drawRoundRect(startBtnX, btnY, btnW, btnH, 6, TFT_BLACK);
+
+    M5.Display.setTextColor(TFT_WHITE);
+    String startText = "복습하기";
+    int startTextW = M5.Display.textWidth(startText.c_str());
+    M5.Display.setCursor(startBtnX + (btnW - startTextW) / 2, btnY + (btnH - 16) / 2);
+    M5.Display.print(startText);
+
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.display();
+    M5.Display.waitDisplay();
+}
+
+// Returns: 0 = skip, 1 = start review, -1 = no touch
+int handleReviewPromptTouch(int x, int y) {
+    int dialogW = 400;
+    int dialogH = 200;
+    int dialogX = (SCREEN_WIDTH - dialogW) / 2;
+    int dialogY = (SCREEN_HEIGHT - dialogH) / 2;
+
+    int btnW = 120;
+    int btnH = 45;
+    int btnY = dialogY + dialogH - btnH - 25;
+    int btnGap = 30;
+    int skipBtnX = dialogX + (dialogW - 2 * btnW - btnGap) / 2;
+    int startBtnX = skipBtnX + btnW + btnGap;
+
+    // Check if in button area
+    if (y >= btnY && y < btnY + btnH) {
+        if (x >= skipBtnX && x < skipBtnX + btnW) {
+            return 0;  // Skip
+        }
+        if (x >= startBtnX && x < startBtnX + btnW) {
+            return 1;  // Start review
+        }
+    }
+
+    return -1;  // No button touched
+}
+
+// ============================================
 // Display Refresh
 // ============================================
 unsigned long lastFullClearTime = 0;
@@ -769,11 +865,24 @@ void loop() {
     if (!wifiMode) {
         sleepMgr.update();
 
-        // If we just woke up from sleep, trigger full redraw and skip this loop
+        // If we just woke up from sleep, trigger full redraw
         if (sleepMgr.justWokeUp()) {
             needsFullRedraw = true;
             forceFullClear = true;
             sleepMgr.clearWakeFlag();
+
+            // Check if we should show review prompt
+            if (sleepMgr.shouldShowReviewPrompt()) {
+                showingReviewPrompt = true;
+                reviewPromptDueCount = sleepMgr.getPromptDueCount();
+                sleepMgr.clearReviewPromptFlag();
+
+                // Draw current screen first, then overlay dialog
+                refreshDisplay();
+                drawReviewPromptDialog(reviewPromptDueCount);
+                return;
+            }
+
             // Force immediate redraw
             refreshDisplay();
             return;
@@ -798,6 +907,30 @@ void loop() {
     }
 
     ScreenManager& sm = ScreenManager::instance();
+
+    // Review prompt handling
+    if (showingReviewPrompt) {
+        if (touch.wasPressed()) {
+            sleepMgr.resetActivity();
+            int result = handleReviewPromptTouch(touch.x, touch.y);
+
+            if (result == 0) {
+                // Skip - dismiss dialog and continue
+                showingReviewPrompt = false;
+                needsFullRedraw = true;
+                forceFullClear = true;
+            } else if (result == 1) {
+                // Start review - switch to word SRS screen
+                showingReviewPrompt = false;
+                sm.switchTo(TabIndex::TAB_WORD);
+                needsFullRedraw = true;
+                forceFullClear = true;
+            }
+            // If result == -1, touch was outside buttons, wait for valid touch
+        }
+        delay(10);
+        return;
+    }
 
     // Touch handling
     if (touch.wasPressed()) {

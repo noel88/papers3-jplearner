@@ -3,6 +3,9 @@
 #include <M5Unified.h>
 #include "Config.h"
 
+// Forward declaration
+class SRSManager;
+
 /**
  * SleepManager - Handles device sleep mode with e-ink sleep screen
  *
@@ -53,6 +56,21 @@ public:
     void clearWakeFlag() { _justWokeUp = false; }
 
     /**
+     * Check if review prompt should be shown
+     */
+    bool shouldShowReviewPrompt() const { return _showReviewPrompt; }
+
+    /**
+     * Clear review prompt flag after handling
+     */
+    void clearReviewPromptFlag() { _showReviewPrompt = false; }
+
+    /**
+     * Get count of due cards for review prompt
+     */
+    int getPromptDueCount() const { return _promptDueCount; }
+
+    /**
      * Force immediate sleep
      */
     void enterSleep();
@@ -88,6 +106,8 @@ private:
     // State
     bool _sleeping = false;
     bool _justWokeUp = false;
+    bool _showReviewPrompt = false;
+    int _promptDueCount = 0;
     unsigned long _lastActivity = 0;
     int _sleepMinutes = 5;  // Default 5 minutes
 };

@@ -1,4 +1,5 @@
 #include "SleepManager.h"
+#include "SRSManager.h"
 #include "UIHelpers.h"
 #include <esp_sleep.h>
 
@@ -62,6 +63,20 @@ void SleepManager::wakeUp() {
     _sleeping = false;
     _justWokeUp = true;
     _lastActivity = millis();
+
+    // Check for due cards and trigger review prompt
+    SRSManager& srs = SRSManager::instance();
+    int dueCount = srs.getDueCount();
+    int newCount = srs.getNewCount();
+    int totalReviewable = dueCount + newCount;
+
+    if (totalReviewable > 0) {
+        _showReviewPrompt = true;
+        _promptDueCount = totalReviewable;
+    } else {
+        _showReviewPrompt = false;
+        _promptDueCount = 0;
+    }
 }
 
 int SleepManager::getBatteryPercent() {

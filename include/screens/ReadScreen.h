@@ -4,6 +4,7 @@
 #include "EpubParser.h"
 #include "TextLayout.h"
 #include "PopupMenu.h"
+#include "DictionaryManager.h"
 #include <vector>
 
 /**
@@ -81,6 +82,10 @@ private:
     TextLayout _textLayout;
     PopupMenu _popupMenu;
 
+    // Dictionary popup
+    bool _showingDictionary = false;
+    std::vector<DictEntry> _dictResults;
+
     // ============================================
     // Book Selection Mode
     // ============================================
@@ -133,4 +138,9 @@ private:
     void handlePopupAction(PopupMenu::Action action);
     void saveToVocabulary(const String& word);
     void saveToGrammar(const String& text);
+    void showToast(const char* message);
+
+    // Dictionary helpers
+    void showDictionaryPopup(const String& word);
+    void drawDictionaryEntry(const DictEntry& entry, int y);
 };

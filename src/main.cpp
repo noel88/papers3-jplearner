@@ -750,6 +750,14 @@ void setup() {
 }
 
 // ============================================
+// Sleep Timeout Update (called from Settings)
+// ============================================
+void updateSleepTimeout() {
+    SleepManager::instance().setSleepMinutes(config.sleepMinutes);
+    Serial.printf("Sleep timeout updated: %d minutes\n", config.sleepMinutes);
+}
+
+// ============================================
 // Loop
 // ============================================
 void loop() {

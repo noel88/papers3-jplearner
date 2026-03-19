@@ -27,22 +27,9 @@ void CopyScreen::onEnter() {
 
     // Reload font settings
     FontManager& fm = FontManager::instance();
-    Serial.println("=== CopyScreen::onEnter ===");
-    Serial.printf("CopyScreen: primaryFont='%s', size=%d\n",
-                  config.primaryFont.c_str(), config.fontSizePt);
-    Serial.flush();
-
     if (config.primaryFont.length() > 0) {
-        Serial.println("CopyScreen: Loading custom font...");
-        Serial.flush();
-        bool loaded = fm.setPrimaryFont(config.primaryFont);
-        Serial.printf("CopyScreen: Font load result=%d, hasCustomFont=%d, err=%d\n",
-                      loaded, fm.hasCustomFont(), fm.getLastError());
-        Serial.flush();
+        fm.setPrimaryFont(config.primaryFont);
         fm.setFontSize(config.fontSizePt);
-    } else {
-        Serial.println("CopyScreen: Using built-in font");
-        Serial.flush();
     }
 
     // Reload content when entering screen
@@ -71,8 +58,6 @@ bool CopyScreen::loadTodayContent() {
     _totalPages = 0;
     _pageBreaks.clear();
 
-    Serial.printf("CopyScreen: Loading day %d\n", dayOfYear);
-
     // Try EPUB first, then fall back to text file
     bool loaded = loadFromEpub(dayOfYear);
     if (!loaded) {
@@ -81,8 +66,6 @@ bool CopyScreen::loadTodayContent() {
 
     if (loaded) {
         calculatePages();
-        Serial.printf("CopyScreen: Loaded '%s' by %s, %d paragraphs, %d pages\n",
-                      _title.c_str(), _author.c_str(), _paragraphs.size(), _totalPages);
     }
 
     requestRedraw();
@@ -92,15 +75,12 @@ bool CopyScreen::loadTodayContent() {
 String CopyScreen::findEpubFile() {
     File dir = SD.open(DIR_BOOKS);
     if (!dir) {
-        Serial.println("CopyScreen: Cannot open books directory");
         return "";
     }
 
-    String configMatch = "";  // Match for config.dailyEpub
-    String firstEpub = "";    // First EPUB found
-    String bestMatch = "";    // Best auto-detect match
-
-    Serial.printf("CopyScreen: Looking for EPUB (config: '%s')\n", config.dailyEpub.c_str());
+    String configMatch = "";
+    String firstEpub = "";
+    String bestMatch = "";
 
     while (File entry = dir.openNextFile()) {
         String name = entry.name();
@@ -111,15 +91,12 @@ String CopyScreen::findEpubFile() {
             continue;
         }
 
-        Serial.printf("CopyScreen: Found EPUB: %s\n", name.c_str());
-
         String fullPath = String(DIR_BOOKS) + "/" + name;
 
         // Check if this matches config.dailyEpub
         if (config.dailyEpub.length() > 0 && name == config.dailyEpub) {
             configMatch = fullPath;
-            Serial.printf("CopyScreen: Config match found!\n");
-            break;  // Found exact match, no need to continue
+            break;
         }
 
         // Remember first EPUB as fallback
@@ -132,57 +109,57 @@ String CopyScreen::findEpubFile() {
             (name.indexOf("365") >= 0 || name.indexOf("1日") >= 0 ||
              name.indexOf("daily") >= 0 || name.indexOf("Daily") >= 0)) {
             bestMatch = fullPath;
-            Serial.printf("CopyScreen: Auto-detect match: %s\n", name.c_str());
         }
     }
     dir.close();
 
     // Priority: config match > auto-detect > first EPUB
-    String result;
     if (configMatch.length() > 0) {
-        result = configMatch;
+        return configMatch;
     } else if (bestMatch.length() > 0) {
-        result = bestMatch;
-    } else {
-        result = firstEpub;
+        return bestMatch;
     }
-
-    if (result.length() > 0) {
-        Serial.printf("CopyScreen: Selected EPUB: %s\n", result.c_str());
-    }
-    return result;
+    return firstEpub;
 }
 
 int CopyScreen::detectChapterOffset() {
     // Search first 15 chapters to find where Day 1 content starts
-    // Must verify by checking consecutive chapters have sequential dates
+    // Verify by checking consecutive chapters and cross-reference with known date
 
     int totalChapters = _epubParser.getChapterCount();
     int searchLimit = min(15, totalChapters);
+    const auto& chapters = _epubParser.getChapters();
 
-    Serial.println("CopyScreen: Auto-detecting chapter offset...");
+    // Helper: check if date pattern exists after newline (proper heading position)
+    auto hasDateAfterNewline = [](const String& text, const char* datePattern) -> bool {
+        int pos = text.indexOf(datePattern);
+        if (pos < 0) return false;
+        if (pos == 0) return true;
+        for (int j = pos - 1; j >= 0 && j >= pos - 5; j--) {
+            if (text.charAt(j) == '\n') return true;
+        }
+        char prevChar = text.charAt(pos - 1);
+        return (prevChar == ' ' || prevChar == '\t' || prevChar == '\r');
+    };
 
     for (int i = 0; i < searchLimit; i++) {
         String text = _epubParser.getChapterText(i);
         if (text.length() == 0) continue;
 
-        // Only check header area (first 150 chars) - date should be at top
-        String header = text.substring(0, min(150, (int)text.length()));
-
+        String header = text.substring(0, min(300, (int)text.length()));
         bool foundDay1 = false;
 
-        // Japanese date patterns for Jan 1 (must be in header position)
-        if (header.indexOf("1月1日") >= 0 ||
-            header.indexOf("１月１日") >= 0) {
+        // Japanese date patterns for Jan 1
+        if (hasDateAfterNewline(header, "1月1日") ||
+            hasDateAfterNewline(header, "１月１日")) {
             foundDay1 = true;
         }
 
         // Day number patterns
-        if (header.indexOf("第1日") >= 0 ||
-            header.indexOf("第１日") >= 0 ||
-            header.indexOf("Day 1") >= 0 ||
-            header.indexOf("DAY 1") >= 0 ||
-            header.indexOf("001") >= 0) {
+        if (!foundDay1 && (hasDateAfterNewline(header, "第1日") ||
+                          hasDateAfterNewline(header, "第１日") ||
+                          hasDateAfterNewline(header, "Day 1") ||
+                          hasDateAfterNewline(header, "DAY 1"))) {
             foundDay1 = true;
         }
 
@@ -190,45 +167,79 @@ int CopyScreen::detectChapterOffset() {
             // Verify: next chapter should have Day 2 pattern
             if (i + 1 < totalChapters) {
                 String nextText = _epubParser.getChapterText(i + 1);
-                String nextHeader = nextText.substring(0, min(150, (int)nextText.length()));
+                String nextHeader = nextText.substring(0, min(300, (int)nextText.length()));
 
-                bool hasDay2 = (nextHeader.indexOf("1月2日") >= 0 ||
-                               nextHeader.indexOf("１月２日") >= 0 ||
-                               nextHeader.indexOf("第2日") >= 0 ||
-                               nextHeader.indexOf("第２日") >= 0 ||
-                               nextHeader.indexOf("Day 2") >= 0 ||
-                               nextHeader.indexOf("DAY 2") >= 0 ||
-                               nextHeader.indexOf("002") >= 0);
+                bool hasDay2 = (hasDateAfterNewline(nextHeader, "1月2日") ||
+                               hasDateAfterNewline(nextHeader, "１月２日") ||
+                               hasDateAfterNewline(nextHeader, "第2日") ||
+                               hasDateAfterNewline(nextHeader, "第２日") ||
+                               hasDateAfterNewline(nextHeader, "Day 2") ||
+                               hasDateAfterNewline(nextHeader, "DAY 2"));
 
                 if (hasDay2) {
-                    Serial.printf("CopyScreen: Verified Day 1 at chapter %d (Day 2 at %d)\n", i, i + 1);
+                    // Cross-verify with a known chapter to calculate correct offset
+                    int testChapter = i + 75;
+                    int correctOffset = i;
+
+                    if (testChapter < totalChapters) {
+                        String testText = _epubParser.getChapterText(testChapter);
+                        String testHeader = testText.substring(0, min(200, (int)testText.length()));
+
+                        // Normalize full-width digits to half-width
+                        String normalized = testHeader;
+                        normalized.replace("０", "0"); normalized.replace("１", "1");
+                        normalized.replace("２", "2"); normalized.replace("３", "3");
+                        normalized.replace("４", "4"); normalized.replace("５", "5");
+                        normalized.replace("６", "6"); normalized.replace("７", "7");
+                        normalized.replace("８", "8"); normalized.replace("９", "9");
+
+                        // Extract actual date to calculate correct offset
+                        int actualDayOfYear = -1;
+                        for (int m = 1; m <= 12 && actualDayOfYear < 0; m++) {
+                            for (int d = 1; d <= 31; d++) {
+                                String pattern = String(m) + "月" + String(d) + "日";
+                                if (normalized.indexOf(pattern) >= 0) {
+                                    actualDayOfYear = getDayOfYear(m, d);
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (actualDayOfYear > 0) {
+                            correctOffset = testChapter - (actualDayOfYear - 1);
+                        }
+                    }
+
                     _readingMode = ReadingMode::DAILY;
-                    return i;
+                    return correctOffset;
                 } else {
-                    Serial.printf("CopyScreen: Found Day 1 pattern at %d but no Day 2 at %d, skipping\n", i, i + 1);
                     continue;
                 }
             } else {
-                // Can't verify, but found pattern - use it
-                Serial.printf("CopyScreen: Found Day 1 at chapter %d (no verification)\n", i);
                 _readingMode = ReadingMode::DAILY;
                 return i;
             }
         }
     }
 
-    // Check file naming pattern as fallback
-    const auto& chapters = _epubParser.getChapters();
+    // Check file naming pattern as fallback (skip TOC/cover files)
     for (int i = 0; i < searchLimit; i++) {
         String href = chapters[i].href;
         href.toLowerCase();
 
+        // Skip TOC, cover, and other non-content files
+        if (href.indexOf("toc") >= 0 || href.indexOf("cover") >= 0 ||
+            href.indexOf("title") >= 0 || href.indexOf("nav") >= 0) {
+            continue;
+        }
+
         // Check for "001" pattern and verify "002" in next
-        if ((href.indexOf("001.") >= 0 || href.indexOf("_001") >= 0) && i + 1 < totalChapters) {
+        if ((href.indexOf("001.") >= 0 || href.indexOf("_001") >= 0 ||
+             href.indexOf("-001") >= 0 || href.indexOf("p-001") >= 0) && i + 1 < totalChapters) {
             String nextHref = chapters[i + 1].href;
             nextHref.toLowerCase();
-            if (nextHref.indexOf("002.") >= 0 || nextHref.indexOf("_002") >= 0) {
-                Serial.printf("CopyScreen: Found sequential numbering starting at chapter %d\n", i);
+            if (nextHref.indexOf("002.") >= 0 || nextHref.indexOf("_002") >= 0 ||
+                nextHref.indexOf("-002") >= 0 || nextHref.indexOf("p-002") >= 0) {
                 _readingMode = ReadingMode::DAILY;
                 return i;
             }
@@ -236,7 +247,6 @@ int CopyScreen::detectChapterOffset() {
     }
 
     // No daily pattern found - switch to Sequential mode
-    Serial.println("CopyScreen: No daily pattern found, using Sequential mode");
     _readingMode = ReadingMode::SEQUENTIAL;
     return 0;  // Start from chapter 0
 }
@@ -245,16 +255,13 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
     // Find the EPUB file that should be used
     String targetPath = findEpubFile();
     if (targetPath.length() == 0) {
-        Serial.println("CopyScreen: No EPUB found");
         return false;
     }
 
     // If a different EPUB is requested, close current and reset offset
     if (_epubParser.isOpen() && _epubPath != targetPath) {
-        Serial.printf("CopyScreen: Switching EPUB from %s to %s\n",
-                      _epubPath.c_str(), targetPath.c_str());
         _epubParser.close();
-        _chapterOffset = -1;  // Reset offset for new book
+        _chapterOffset = -1;
     }
 
     // Open EPUB if not already open
@@ -262,20 +269,11 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
         _epubPath = targetPath;
 
         if (!_epubParser.open(_epubPath)) {
-            Serial.println("CopyScreen: Failed to open EPUB");
             return false;
         }
 
-        // Get metadata
-        const EpubMetadata& meta = _epubParser.getMetadata();
-        Serial.printf("CopyScreen: EPUB opened - %s by %s, %d chapters\n",
-                      meta.title.c_str(), meta.author.c_str(), _epubParser.getChapterCount());
-
         // Auto-detect chapter offset and reading mode
         _chapterOffset = detectChapterOffset();
-        Serial.printf("CopyScreen: offset=%d, mode=%s\n",
-                      _chapterOffset,
-                      _readingMode == ReadingMode::DAILY ? "DAILY" : "SEQUENTIAL");
 
         // Load saved progress for Sequential mode
         if (_readingMode == ReadingMode::SEQUENTIAL) {
@@ -286,31 +284,20 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
     // Calculate chapter index based on reading mode
     int chapterIndex;
     if (_readingMode == ReadingMode::DAILY) {
-        // Daily mode: Day N = offset + (N - 1)
         chapterIndex = _chapterOffset + (dayOfYear - 1);
-        Serial.printf("CopyScreen: DAILY mode - dayOfYear=%d, chapterIndex=%d\n",
-                      dayOfYear, chapterIndex);
     } else {
-        // Sequential mode: use saved chapter
         chapterIndex = _currentChapter;
-        Serial.printf("CopyScreen: SEQUENTIAL mode - currentChapter=%d\n", chapterIndex);
     }
 
     // Bounds check
     if (chapterIndex < 0 || chapterIndex >= _epubParser.getChapterCount()) {
-        Serial.printf("CopyScreen: Chapter %d out of range (total: %d)\n",
-                      chapterIndex, _epubParser.getChapterCount());
         return false;
     }
 
     // Get chapter text
     const auto& chapters = _epubParser.getChapters();
-    Serial.printf("CopyScreen: Loading chapter[%d]: %s\n",
-                  chapterIndex, chapters[chapterIndex].href.c_str());
-
     String chapterText = _epubParser.getChapterText(chapterIndex);
     if (chapterText.length() == 0) {
-        Serial.println("CopyScreen: Empty chapter content");
         return false;
     }
 
@@ -326,9 +313,6 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
     if (_author.length() == 0) {
         _author = _epubParser.getMetadata().author;
     }
-
-    Serial.printf("CopyScreen: Final title='%s', author='%s'\n",
-                  _title.c_str(), _author.c_str());
 
     return _paragraphs.size() > 0;
 }
@@ -385,8 +369,6 @@ bool CopyScreen::loadFromTextFile(int dayOfYear) {
     char target[8];
     sprintf(target, "#%03d", dayOfYear);
 
-    Serial.printf("CopyScreen: Trying text file for %s\n", target);
-
     File f;
     String filePath = String(DIR_BOOKS) + "/365.txt";
 
@@ -397,7 +379,6 @@ bool CopyScreen::loadFromTextFile(int dayOfYear) {
     }
 
     if (!f) {
-        Serial.println("CopyScreen: 365.txt not found");
         return false;
     }
 
@@ -479,7 +460,6 @@ void CopyScreen::calculatePages() {
     }
 
     _totalPages = _pageBreaks.size();
-    Serial.printf("CopyScreen: Calculated %d pages\n", _totalPages);
 }
 
 void CopyScreen::drawHeader() {
@@ -815,8 +795,6 @@ void CopyScreen::handleWordSelection(int x, int y) {
         M5.Display.startWrite();
         drawPageContent();
         M5.Display.endWrite();
-
-        Serial.printf("Selected word: '%s'\n", word.text.c_str());
     } else {
         // Touch on empty area - clear selection
         if (_textLayout.hasSelection() || _popupMenu.isVisible()) {
@@ -838,17 +816,14 @@ void CopyScreen::handlePopupAction(PopupMenu::Action action) {
     switch (action) {
         case PopupMenu::SEARCH:
             // TODO: Phase 4 - Dictionary search
-            Serial.printf("Search: %s\n", selectedText.c_str());
             break;
 
         case PopupMenu::SAVE:
             saveToVocabulary(selectedText);
-            Serial.printf("Saved to vocabulary: %s\n", selectedText.c_str());
             break;
 
         case PopupMenu::GRAMMAR:
             saveToGrammar(selectedText);
-            Serial.printf("Saved to grammar: %s\n", selectedText.c_str());
             break;
 
         case PopupMenu::CANCEL:
@@ -890,8 +865,7 @@ void CopyScreen::loadReadingProgress() {
     // Format: <epub_filename>:<chapter>:<page>
     File file = LittleFS.open("/userdata/reading_progress.txt", FILE_READ);
     if (!file) {
-        Serial.println("CopyScreen: No saved reading progress");
-        _currentChapter = _chapterOffset;  // Start from first content chapter
+        _currentChapter = _chapterOffset;
         _currentPage = 0;
         return;
     }
@@ -910,11 +884,7 @@ void CopyScreen::loadReadingProgress() {
         if (savedEpub == epubName) {
             _currentChapter = line.substring(sep1 + 1, sep2).toInt();
             _currentPage = line.substring(sep2 + 1).toInt();
-            Serial.printf("CopyScreen: Loaded progress - chapter=%d, page=%d\n",
-                          _currentChapter, _currentPage);
         } else {
-            Serial.printf("CopyScreen: Different book, starting fresh (saved=%s, current=%s)\n",
-                          savedEpub.c_str(), epubName.c_str());
             _currentChapter = _chapterOffset;
             _currentPage = 0;
         }
@@ -940,7 +910,5 @@ void CopyScreen::saveReadingProgress() {
         String epubName = _epubPath.substring(_epubPath.lastIndexOf('/') + 1);
         file.printf("%s:%d:%d\n", epubName.c_str(), _currentChapter, _currentPage);
         file.close();
-        Serial.printf("CopyScreen: Saved progress - chapter=%d, page=%d\n",
-                      _currentChapter, _currentPage);
     }
 }

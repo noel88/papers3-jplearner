@@ -75,6 +75,10 @@ private:
     int _fontScrollOffset;
     bool _selectingFallback;  // true when selecting fallback font
 
+    // Time adjustment (temporary values before saving)
+    int _adjYear, _adjMonth, _adjDay, _adjHour, _adjMinute;
+    bool _timeAdjustInitialized = false;
+
     // ============================================
     // Drawing Methods for Each State
     // ============================================
@@ -97,6 +101,7 @@ private:
     bool handleWiFiSTATouch(int x, int y);
     bool handleFontSettingsTouch(int x, int y);
     bool handleDailyEpubTouch(int x, int y);
+    bool handleSystemSettingsTouch(int x, int y);
     bool handleBackButton(int y);
 
     // ============================================

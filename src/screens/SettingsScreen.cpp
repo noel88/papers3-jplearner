@@ -68,8 +68,9 @@ bool SettingsScreen::handleTouchStart(int x, int y) {
             return handleFontSettingsTouch(x, y);
         case SettingsState::Display:
         case SettingsState::Learning:
-        case SettingsState::System:
             return handleBackButton(y);
+        case SettingsState::System:
+            return handleSystemSettingsTouch(x, y);
         default:
             return false;
     }
@@ -265,11 +266,152 @@ void SettingsScreen::drawLearningSettings() {
 
 void SettingsScreen::drawSystemSettings() {
     clearContentArea();
+
     M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    // Title with back button (bold)
     M5.Display.setTextSize(UI::SIZE_TITLE);
-    UI::drawBoldTextCentered("시스템 설정", CONTENT_HEIGHT / 2 - 40);
+    UI::drawBoldText("< 시스템 설정", PAD_X, PAD_Y);
+    M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
+
     M5.Display.setTextSize(UI::SIZE_CONTENT);
-    UI::drawBoldTextCentered("< 뒤로가기: 상단 터치", CONTENT_HEIGHT / 2 + 20);
+    int y = ITEMS_START_Y + 10;
+
+    // ============================================
+    // Sleep time setting
+    // ============================================
+    UI::drawBoldText("슬립 시간", PAD_X, y);
+
+    int btnW = 50;
+    int btnH = 40;
+    int sleepX = SCREEN_WIDTH - PAD_X - btnW * 2 - 80;
+
+    // Minus button
+    M5.Display.drawRect(sleepX, y - 5, btnW, btnH, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.setCursor(sleepX + 18, y + 5);
+    M5.Display.print("-");
+
+    // Current value
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(UI::SIZE_BODY);
+    char sleepBuf[16];
+    if (config.sleepMinutes <= 0) {
+        snprintf(sleepBuf, sizeof(sleepBuf), "OFF");
+    } else {
+        snprintf(sleepBuf, sizeof(sleepBuf), "%d분", config.sleepMinutes);
+    }
+    int textW = M5.Display.textWidth(sleepBuf);
+    UI::drawBoldText(sleepBuf, sleepX + btnW + (60 - textW) / 2, y + 2);
+
+    // Plus button
+    M5.Display.drawRect(sleepX + btnW + 60, y - 5, btnW, btnH, TFT_BLACK);
+    M5.Display.setFont(&fonts::Font4);
+    M5.Display.setCursor(sleepX + btnW + 60 + 16, y + 5);
+    M5.Display.print("+");
+
+    y += 55;
+
+    // Divider
+    M5.Display.drawLine(PAD_X, y, SCREEN_WIDTH - PAD_X, y, 0xDEDB);
+    y += 15;
+
+    // ============================================
+    // Date/Time manual adjustment
+    // ============================================
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
+    UI::drawBoldText("날짜/시간 설정", PAD_X, y);
+    y += 45;
+
+    // Get current RTC time or use adjusted values
+    auto dt = M5.Rtc.getDateTime();
+    if (!_timeAdjustInitialized) {
+        _adjYear = dt.date.year;
+        _adjMonth = dt.date.month;
+        _adjDay = dt.date.date;
+        _adjHour = dt.time.hours;
+        _adjMinute = dt.time.minutes;
+        _timeAdjustInitialized = true;
+    }
+
+    // Draw adjustment controls: Year, Month, Day, Hour, Minute
+    int colW = 150;
+    int startX = PAD_X + 50;
+    int adjBtnW = 40;
+    int adjBtnH = 35;
+
+    M5.Display.setFont(&fonts::Font2);
+
+    // Labels
+    const char* labels[] = {"Year", "Month", "Day", "Hour", "Min"};
+    int values[] = {_adjYear, _adjMonth, _adjDay, _adjHour, _adjMinute};
+
+    for (int i = 0; i < 5; i++) {
+        int x = startX + i * colW;
+
+        // Label
+        M5.Display.setCursor(x + 20, y);
+        M5.Display.print(labels[i]);
+
+        // Minus button
+        M5.Display.drawRect(x, y + 25, adjBtnW, adjBtnH, TFT_BLACK);
+        M5.Display.setCursor(x + 15, y + 35);
+        M5.Display.print("-");
+
+        // Value
+        M5.Display.setFont(&fonts::efontKR_24);
+        M5.Display.setTextSize(UI::SIZE_BODY);
+        char valBuf[8];
+        if (i == 0) {
+            snprintf(valBuf, sizeof(valBuf), "%04d", values[i]);
+        } else {
+            snprintf(valBuf, sizeof(valBuf), "%02d", values[i]);
+        }
+        int valW = M5.Display.textWidth(valBuf);
+        UI::drawBoldText(valBuf, x + adjBtnW + (colW - adjBtnW * 2 - valW) / 2, y + 30);
+        M5.Display.setFont(&fonts::Font2);
+
+        // Plus button
+        M5.Display.drawRect(x + colW - adjBtnW - 10, y + 25, adjBtnW, adjBtnH, TFT_BLACK);
+        M5.Display.setCursor(x + colW - adjBtnW - 10 + 13, y + 35);
+        M5.Display.print("+");
+    }
+
+    y += 80;
+
+    // Save button
+    int saveBtnW = 200;
+    int saveBtnH = 45;
+    int saveBtnX = (SCREEN_WIDTH - saveBtnW) / 2;
+
+    M5.Display.fillRect(saveBtnX, y, saveBtnW, saveBtnH, TFT_BLACK);
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
+    int saveTextW = M5.Display.textWidth("시간 저장");
+    UI::drawBoldText("시간 저장", saveBtnX + (saveBtnW - saveTextW) / 2, y + 10);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    y += saveBtnH + 20;
+
+    // Current time display
+    M5.Display.setFont(&fonts::Font2);
+    M5.Display.setCursor(PAD_X, y);
+    char currentBuf[64];
+    snprintf(currentBuf, sizeof(currentBuf), "Current RTC: %04d-%02d-%02d %02d:%02d:%02d",
+             dt.date.year, dt.date.month, dt.date.date,
+             dt.time.hours, dt.time.minutes, dt.time.seconds);
+    M5.Display.print(currentBuf);
+
+    // Help text
+    M5.Display.setTextColor(0x8410);
+    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 25);
+    M5.Display.print("Adjust date/time and tap 'Save' to apply.");
+    M5.Display.setTextColor(TFT_BLACK);
+
+    M5.Display.setFont(&fonts::efontKR_24);
 }
 
 // ============================================
@@ -890,6 +1032,129 @@ bool SettingsScreen::handleFontSettingsTouch(int x, int y) {
                 return true;
             }
         }
+    }
+
+    return false;
+}
+
+bool SettingsScreen::handleSystemSettingsTouch(int x, int y) {
+    // Back button (top area)
+    if (y < BACK_BUTTON_HEIGHT) {
+        _state = SettingsState::Main;
+        _timeAdjustInitialized = false;  // Reset for next time
+        requestRedraw();
+        return true;
+    }
+
+    // Sleep time buttons
+    int sleepY = ITEMS_START_Y + 10 - 5;
+    int btnW = 50;
+    int btnH = 40;
+    int sleepX = SCREEN_WIDTH - PAD_X - btnW * 2 - 80;
+
+    if (y >= sleepY && y <= sleepY + btnH) {
+        // Minus button
+        if (x >= sleepX && x <= sleepX + btnW) {
+            if (config.sleepMinutes > 0) {
+                if (config.sleepMinutes <= 1) {
+                    config.sleepMinutes = 0;  // OFF
+                } else if (config.sleepMinutes <= 5) {
+                    config.sleepMinutes -= 1;
+                } else {
+                    config.sleepMinutes -= 5;
+                }
+                saveConfig();
+                extern void updateSleepTimeout();
+                updateSleepTimeout();
+                requestRedraw();
+            }
+            return true;
+        }
+
+        // Plus button
+        if (x >= sleepX + btnW + 60 && x <= sleepX + btnW * 2 + 60) {
+            if (config.sleepMinutes < 30) {
+                if (config.sleepMinutes == 0) {
+                    config.sleepMinutes = 1;
+                } else if (config.sleepMinutes < 5) {
+                    config.sleepMinutes += 1;
+                } else {
+                    config.sleepMinutes += 5;
+                }
+                saveConfig();
+                extern void updateSleepTimeout();
+                updateSleepTimeout();
+                requestRedraw();
+            }
+            return true;
+        }
+    }
+
+    // Date/Time adjustment buttons
+    int timeY = ITEMS_START_Y + 10 + 55 + 15 + 45;  // After sleep section + label
+    int adjBtnH = 35;
+    int colW = 150;
+    int startX = PAD_X + 50;
+    int adjBtnW = 40;
+
+    // Check if touch is in the adjustment row
+    if (y >= timeY + 25 && y <= timeY + 25 + adjBtnH) {
+        for (int i = 0; i < 5; i++) {
+            int colX = startX + i * colW;
+
+            // Minus button
+            if (x >= colX && x <= colX + adjBtnW) {
+                switch (i) {
+                    case 0: _adjYear = max(2020, _adjYear - 1); break;
+                    case 1: _adjMonth = (_adjMonth <= 1) ? 12 : _adjMonth - 1; break;
+                    case 2: _adjDay = (_adjDay <= 1) ? 31 : _adjDay - 1; break;
+                    case 3: _adjHour = (_adjHour <= 0) ? 23 : _adjHour - 1; break;
+                    case 4: _adjMinute = (_adjMinute <= 0) ? 59 : _adjMinute - 1; break;
+                }
+                requestRedraw();
+                return true;
+            }
+
+            // Plus button
+            int plusX = colX + colW - adjBtnW - 10;
+            if (x >= plusX && x <= plusX + adjBtnW) {
+                switch (i) {
+                    case 0: _adjYear = min(2099, _adjYear + 1); break;
+                    case 1: _adjMonth = (_adjMonth >= 12) ? 1 : _adjMonth + 1; break;
+                    case 2: _adjDay = (_adjDay >= 31) ? 1 : _adjDay + 1; break;
+                    case 3: _adjHour = (_adjHour >= 23) ? 0 : _adjHour + 1; break;
+                    case 4: _adjMinute = (_adjMinute >= 59) ? 0 : _adjMinute + 1; break;
+                }
+                requestRedraw();
+                return true;
+            }
+        }
+    }
+
+    // Save button
+    int saveY = timeY + 80;
+    int saveBtnW = 200;
+    int saveBtnH = 45;
+    int saveBtnX = (SCREEN_WIDTH - saveBtnW) / 2;
+
+    if (y >= saveY && y <= saveY + saveBtnH &&
+        x >= saveBtnX && x <= saveBtnX + saveBtnW) {
+        // Save to RTC
+        m5::rtc_datetime_t dt;
+        dt.date.year = _adjYear;
+        dt.date.month = _adjMonth;
+        dt.date.date = _adjDay;
+        dt.time.hours = _adjHour;
+        dt.time.minutes = _adjMinute;
+        dt.time.seconds = 0;
+
+        M5.Rtc.setDateTime(dt);
+        Serial.printf("RTC set to: %04d-%02d-%02d %02d:%02d:00\n",
+                      _adjYear, _adjMonth, _adjDay, _adjHour, _adjMinute);
+
+        _timeAdjustInitialized = false;  // Re-read from RTC next time
+        requestRedraw();
+        return true;
     }
 
     return false;

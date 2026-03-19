@@ -715,17 +715,14 @@ bool CopyScreen::handleTouchMove(int x, int y) {
     if (dx > 10 || dy > 10) {
         WordInfo currentWord;
         if (_textLayout.findWordAt(x, y, currentWord)) {
-            // Only update if different from current selection
-            if (currentWord.x != _dragStartWord.x || currentWord.y != _dragStartWord.y) {
-                // Clear old highlight first
-                M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-                M5.Display.startWrite();
-                drawPageContent();  // Need full redraw for drag to clear old highlight
-                M5.Display.endWrite();
+            // Update selection
+            _textLayout.setRangeSelection(_dragStartWord, currentWord);
 
-                // Update selection
-                _textLayout.setRangeSelection(_dragStartWord, currentWord);
-            }
+            // Redraw only highlight - partial update
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            _textLayout.drawHighlight();
+            M5.Display.endWrite();
         }
     }
 
@@ -745,7 +742,8 @@ bool CopyScreen::handleTouchEnd() {
 
             M5.Display.setEpdMode(epd_mode_t::epd_fastest);
             M5.Display.startWrite();
-            drawPageContent();
+            _textLayout.drawHighlight();
+            _popupMenu.draw();
             M5.Display.endWrite();
         }
         return true;

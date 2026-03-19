@@ -22,7 +22,8 @@ ReadScreen::ReadScreen()
       _touchStartTime(0),
       _touchStartX(0),
       _touchStartY(0),
-      _touchInContentArea(false) {
+      _touchInContentArea(false),
+      _inDragSelection(false) {
 }
 
 void ReadScreen::onEnter() {
@@ -537,12 +538,13 @@ bool ReadScreen::handleReadingTouch(int x, int y) {
         }
     }
 
-    // Content area touch - start tracking for long press
+    // Content area touch - start tracking for long press/drag
     if (y >= contentY && y < navY) {
         _touchStartX = x;
         _touchStartY = y;
         _touchStartTime = millis();
         _touchInContentArea = true;
+        _inDragSelection = false;
         return false;  // Don't trigger redraw yet
     }
 
@@ -676,11 +678,73 @@ bool ReadScreen::handleTouchStart(int x, int y) {
     return false;
 }
 
+bool ReadScreen::handleTouchMove(int x, int y) {
+    // Only handle drag selection in Reading mode
+    if (_mode != Mode::Reading || !_touchInContentArea) {
+        return false;
+    }
+
+    // Check if moved enough to start drag selection
+    int dx = abs(x - _touchStartX);
+    int dy = abs(y - _touchStartY);
+
+    if (!_inDragSelection && (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD)) {
+        // Start drag selection - find word at start position
+        if (_textLayout.findWordAt(_touchStartX, _touchStartY, _dragStartWord)) {
+            _inDragSelection = true;
+            Serial.println("Started drag selection");
+        }
+    }
+
+    // Update drag selection
+    if (_inDragSelection) {
+        WordInfo dragEndWord;
+        if (_textLayout.findWordAt(x, y, dragEndWord)) {
+            // Update range selection
+            _textLayout.setRangeSelection(_dragStartWord, dragEndWord);
+
+            // Redraw only highlight - partial update
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            _textLayout.drawHighlight();
+            M5.Display.endWrite();
+        }
+        return true;
+    }
+
+    return false;
+}
+
 bool ReadScreen::handleTouchEnd() {
-    // Only handle touch end in Reading mode for word selection
+    // Only handle touch end in Reading mode
     if (_mode == Mode::Reading && _touchInContentArea) {
         _touchInContentArea = false;
 
+        // If we were in drag selection, show popup menu
+        if (_inDragSelection) {
+            _inDragSelection = false;
+
+            if (_textLayout.hasSelection()) {
+                String selectedText = _textLayout.getSelectedText();
+
+                // Show popup menu at end position
+                auto touch = M5.Touch.getDetail();
+                _popupMenu.show(touch.x, touch.y, selectedText);
+
+                // Redraw with popup
+                M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+                M5.Display.startWrite();
+                _textLayout.drawHighlight();
+                _popupMenu.draw();
+                M5.Display.endWrite();
+
+                Serial.printf("Drag selection complete: '%s'\n", selectedText.c_str());
+                return true;
+            }
+            return false;
+        }
+
+        // Not drag selection - check for long press or tap
         unsigned long pressDuration = millis() - _touchStartTime;
         int dx = abs(M5.Touch.getDetail().x - _touchStartX);
         int dy = abs(M5.Touch.getDetail().y - _touchStartY);

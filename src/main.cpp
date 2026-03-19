@@ -526,6 +526,8 @@ void startWiFiMode() {
 
     setupWebServer();
 
+    // Use fast mode to avoid long blocking
+    M5.Display.setEpdMode(epd_mode_t::epd_fast);
     M5.Display.fillScreen(TFT_WHITE);
     M5.Display.setTextColor(TFT_BLACK);
     M5.Display.setFont(&fonts::efontKR_24);
@@ -898,34 +900,8 @@ void loop() {
 
     updateBattery();
 
-    // Handle power button (side button)
-    // Single click: Deep sleep
-    // Double click: Full refresh (clear ghosting)
-    // Long press: Toggle WiFi mode
-    if (M5.BtnPWR.wasHold()) {
-        // Long press - Toggle WiFi mode
-        if (wifiMode) {
-            stopWiFiMode();
-            copyScreen.loadTodayContent();
-            needsFullRedraw = true;
-        } else {
-            startWiFiMode();
-        }
-        sleepMgr.resetActivity();
-    } else if (M5.BtnPWR.wasClicked()) {
-        int clickCount = M5.BtnPWR.getClickCount();
-
-        if (clickCount == 1) {
-            // Single click - Deep sleep
-            sleepMgr.enterSleep();
-        } else if (clickCount >= 2) {
-            // Double click - Force full refresh to clear ghosting
-            forceFullClear = true;
-            needsFullRedraw = true;
-        }
-
-        sleepMgr.resetActivity();
-    }
+    // Physical power button disabled due to stability issues
+    // Use Settings screen to access WiFi mode instead
 
     auto touch = M5.Touch.getDetail();
 

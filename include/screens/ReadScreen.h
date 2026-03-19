@@ -48,6 +48,7 @@ public:
     void onExit() override;
     void draw() override;
     bool handleTouchStart(int x, int y) override;
+    bool handleTouchMove(int x, int y) override;
     bool handleTouchEnd() override;
 
 private:
@@ -88,10 +89,12 @@ private:
     // Content rendering
     ContentRenderer _contentRenderer;
 
-    // Touch tracking for long press
+    // Touch tracking for long press and drag selection
     unsigned long _touchStartTime;
     int _touchStartX, _touchStartY;
     bool _touchInContentArea;
+    bool _inDragSelection;
+    WordInfo _dragStartWord;
     static constexpr unsigned long LONG_PRESS_MS = 400;
     static constexpr int TOUCH_MOVE_THRESHOLD = 20;
 

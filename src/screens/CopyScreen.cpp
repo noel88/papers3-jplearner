@@ -1,6 +1,7 @@
 #include "screens/CopyScreen.h"
 #include "Config.h"
 #include "FontManager.h"
+#include "UIHelpers.h"
 #include <M5Unified.h>
 #include <SD.h>
 #include <LittleFS.h>
@@ -15,7 +16,10 @@ constexpr int TAB_BAR_HEIGHT = 60;  // Tab bar at bottom of screen
 CopyScreen::CopyScreen()
     : BaseScreen(),
       _currentPage(0),
-      _totalPages(0) {
+      _totalPages(0),
+      _chapterOffset(-1),
+      _readingMode(ReadingMode::DAILY),
+      _currentChapter(0) {
 }
 
 void CopyScreen::onEnter() {
@@ -149,6 +153,94 @@ String CopyScreen::findEpubFile() {
     return result;
 }
 
+int CopyScreen::detectChapterOffset() {
+    // Search first 15 chapters to find where Day 1 content starts
+    // Must verify by checking consecutive chapters have sequential dates
+
+    int totalChapters = _epubParser.getChapterCount();
+    int searchLimit = min(15, totalChapters);
+
+    Serial.println("CopyScreen: Auto-detecting chapter offset...");
+
+    for (int i = 0; i < searchLimit; i++) {
+        String text = _epubParser.getChapterText(i);
+        if (text.length() == 0) continue;
+
+        // Only check header area (first 150 chars) - date should be at top
+        String header = text.substring(0, min(150, (int)text.length()));
+
+        bool foundDay1 = false;
+
+        // Japanese date patterns for Jan 1 (must be in header position)
+        if (header.indexOf("1月1日") >= 0 ||
+            header.indexOf("１月１日") >= 0) {
+            foundDay1 = true;
+        }
+
+        // Day number patterns
+        if (header.indexOf("第1日") >= 0 ||
+            header.indexOf("第１日") >= 0 ||
+            header.indexOf("Day 1") >= 0 ||
+            header.indexOf("DAY 1") >= 0 ||
+            header.indexOf("001") >= 0) {
+            foundDay1 = true;
+        }
+
+        if (foundDay1) {
+            // Verify: next chapter should have Day 2 pattern
+            if (i + 1 < totalChapters) {
+                String nextText = _epubParser.getChapterText(i + 1);
+                String nextHeader = nextText.substring(0, min(150, (int)nextText.length()));
+
+                bool hasDay2 = (nextHeader.indexOf("1月2日") >= 0 ||
+                               nextHeader.indexOf("１月２日") >= 0 ||
+                               nextHeader.indexOf("第2日") >= 0 ||
+                               nextHeader.indexOf("第２日") >= 0 ||
+                               nextHeader.indexOf("Day 2") >= 0 ||
+                               nextHeader.indexOf("DAY 2") >= 0 ||
+                               nextHeader.indexOf("002") >= 0);
+
+                if (hasDay2) {
+                    Serial.printf("CopyScreen: Verified Day 1 at chapter %d (Day 2 at %d)\n", i, i + 1);
+                    _readingMode = ReadingMode::DAILY;
+                    return i;
+                } else {
+                    Serial.printf("CopyScreen: Found Day 1 pattern at %d but no Day 2 at %d, skipping\n", i, i + 1);
+                    continue;
+                }
+            } else {
+                // Can't verify, but found pattern - use it
+                Serial.printf("CopyScreen: Found Day 1 at chapter %d (no verification)\n", i);
+                _readingMode = ReadingMode::DAILY;
+                return i;
+            }
+        }
+    }
+
+    // Check file naming pattern as fallback
+    const auto& chapters = _epubParser.getChapters();
+    for (int i = 0; i < searchLimit; i++) {
+        String href = chapters[i].href;
+        href.toLowerCase();
+
+        // Check for "001" pattern and verify "002" in next
+        if ((href.indexOf("001.") >= 0 || href.indexOf("_001") >= 0) && i + 1 < totalChapters) {
+            String nextHref = chapters[i + 1].href;
+            nextHref.toLowerCase();
+            if (nextHref.indexOf("002.") >= 0 || nextHref.indexOf("_002") >= 0) {
+                Serial.printf("CopyScreen: Found sequential numbering starting at chapter %d\n", i);
+                _readingMode = ReadingMode::DAILY;
+                return i;
+            }
+        }
+    }
+
+    // No daily pattern found - switch to Sequential mode
+    Serial.println("CopyScreen: No daily pattern found, using Sequential mode");
+    _readingMode = ReadingMode::SEQUENTIAL;
+    return 0;  // Start from chapter 0
+}
+
 bool CopyScreen::loadFromEpub(int dayOfYear) {
     // Find the EPUB file that should be used
     String targetPath = findEpubFile();
@@ -157,11 +249,12 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
         return false;
     }
 
-    // If a different EPUB is requested, close current and open new
+    // If a different EPUB is requested, close current and reset offset
     if (_epubParser.isOpen() && _epubPath != targetPath) {
         Serial.printf("CopyScreen: Switching EPUB from %s to %s\n",
                       _epubPath.c_str(), targetPath.c_str());
         _epubParser.close();
+        _chapterOffset = -1;  // Reset offset for new book
     }
 
     // Open EPUB if not already open
@@ -177,11 +270,31 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
         const EpubMetadata& meta = _epubParser.getMetadata();
         Serial.printf("CopyScreen: EPUB opened - %s by %s, %d chapters\n",
                       meta.title.c_str(), meta.author.c_str(), _epubParser.getChapterCount());
+
+        // Auto-detect chapter offset and reading mode
+        _chapterOffset = detectChapterOffset();
+        Serial.printf("CopyScreen: offset=%d, mode=%s\n",
+                      _chapterOffset,
+                      _readingMode == ReadingMode::DAILY ? "DAILY" : "SEQUENTIAL");
+
+        // Load saved progress for Sequential mode
+        if (_readingMode == ReadingMode::SEQUENTIAL) {
+            loadReadingProgress();
+        }
     }
 
-    // Chapter index = dayOfYear - 1 (0-indexed)
-    // Some books may have intro chapters, so we might need to adjust
-    int chapterIndex = dayOfYear - 1;
+    // Calculate chapter index based on reading mode
+    int chapterIndex;
+    if (_readingMode == ReadingMode::DAILY) {
+        // Daily mode: Day N = offset + (N - 1)
+        chapterIndex = _chapterOffset + (dayOfYear - 1);
+        Serial.printf("CopyScreen: DAILY mode - dayOfYear=%d, chapterIndex=%d\n",
+                      dayOfYear, chapterIndex);
+    } else {
+        // Sequential mode: use saved chapter
+        chapterIndex = _currentChapter;
+        Serial.printf("CopyScreen: SEQUENTIAL mode - currentChapter=%d\n", chapterIndex);
+    }
 
     // Bounds check
     if (chapterIndex < 0 || chapterIndex >= _epubParser.getChapterCount()) {
@@ -191,6 +304,10 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
     }
 
     // Get chapter text
+    const auto& chapters = _epubParser.getChapters();
+    Serial.printf("CopyScreen: Loading chapter[%d]: %s\n",
+                  chapterIndex, chapters[chapterIndex].href.c_str());
+
     String chapterText = _epubParser.getChapterText(chapterIndex);
     if (chapterText.length() == 0) {
         Serial.println("CopyScreen: Empty chapter content");
@@ -202,7 +319,6 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
 
     // If no title extracted from content, use chapter info
     if (_title.length() == 0) {
-        const auto& chapters = _epubParser.getChapters();
         _title = chapters[chapterIndex].title;
     }
 
@@ -210,6 +326,9 @@ bool CopyScreen::loadFromEpub(int dayOfYear) {
     if (_author.length() == 0) {
         _author = _epubParser.getMetadata().author;
     }
+
+    Serial.printf("CopyScreen: Final title='%s', author='%s'\n",
+                  _title.c_str(), _author.c_str());
 
     return _paragraphs.size() > 0;
 }
@@ -373,15 +492,25 @@ void CopyScreen::drawHeader() {
     int fontH = M5.Display.fontHeight();
     int headerY = (HEADER_HEIGHT - fontH) / 2;
 
-    // Date on the right
-    int dateWidth = M5.Display.textWidth(_date.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - dateWidth, headerY);
-    M5.Display.print(_date);
+    // Right side: Date (Daily mode) or Chapter info (Sequential mode)
+    String rightInfo;
+    if (_readingMode == ReadingMode::DAILY) {
+        rightInfo = _date;
+    } else {
+        // Show chapter progress: "Ch. 5/120"
+        int totalChapters = _epubParser.getChapterCount() - _chapterOffset;
+        int currentChNum = _currentChapter - _chapterOffset + 1;
+        rightInfo = "Ch." + String(currentChNum) + "/" + String(totalChapters);
+    }
 
-    // Author before date
+    int rightWidth = M5.Display.textWidth(rightInfo.c_str());
+    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - rightWidth, headerY);
+    M5.Display.print(rightInfo);
+
+    // Author before right info
     if (_author.length() > 0) {
         int authorWidth = M5.Display.textWidth(_author.c_str());
-        int authorX = SCREEN_WIDTH - PAD_X - dateWidth - 40 - authorWidth;
+        int authorX = SCREEN_WIDTH - PAD_X - rightWidth - 40 - authorWidth;
         if (authorX > 450) {
             M5.Display.setCursor(authorX, headerY);
             M5.Display.print(_author);
@@ -410,6 +539,9 @@ void CopyScreen::drawPageContent() {
 
     // Clear content area
     M5.Display.fillRect(0, HEADER_HEIGHT, SCREEN_WIDTH, contentH, TFT_WHITE);
+
+    // Clear text layout for new page
+    _textLayout.clear();
 
     if (_currentPage >= _totalPages || _pageBreaks.empty()) {
         return;
@@ -465,12 +597,23 @@ void CopyScreen::drawPageContent() {
 
             if (lineEnd == bytePos) lineEnd += 1;
 
+            String lineText = para.substring(bytePos, lineEnd);
+            int lineWidth = useCustomFont ? fm.getTextWidth(lineText) : M5.Display.textWidth(lineText.c_str());
+
+            // Record line position for text selection
+            _textLayout.addLine(i, bytePos, lineEnd, PAD_X, y, lineWidth, fontH + LINE_SPACING, lineText);
+
+            // Draw highlight if this line contains selection
+            if (_textLayout.hasSelection()) {
+                _textLayout.drawHighlight();
+            }
+
             // Draw this line
             if (useCustomFont) {
-                fm.drawString(para.substring(bytePos, lineEnd), PAD_X, y);
+                fm.drawString(lineText, PAD_X, y);
             } else {
                 M5.Display.setCursor(PAD_X, y);
-                M5.Display.print(para.substring(bytePos, lineEnd));
+                M5.Display.print(lineText);
             }
 
             bytePos = lineEnd;
@@ -478,6 +621,11 @@ void CopyScreen::drawPageContent() {
         }
 
         y += PARAGRAPH_SPACING - LINE_SPACING;  // Extra space between paragraphs
+    }
+
+    // Draw popup menu if visible
+    if (_popupMenu.isVisible()) {
+        _popupMenu.draw();
     }
 }
 
@@ -492,32 +640,29 @@ void CopyScreen::drawNavigation() {
     M5.Display.drawLine(PAD_X, navY, SCREEN_WIDTH - PAD_X, navY, TFT_LIGHTGRAY);
 
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
 
     int buttonY = navY + (NAV_HEIGHT - 30) / 2;
     int buttonW = 120;
 
-    // Previous button (left)
+    // Previous button (left, bold)
     if (_currentPage > 0) {
         M5.Display.setTextColor(TFT_BLACK);
-        M5.Display.setCursor(PAD_X + 20, buttonY);
-        M5.Display.print("< 이전");
+        UI::drawBoldText("< 이전", PAD_X + 20, buttonY);
     }
 
-    // Page indicator (center)
+    // Page indicator (center, bold)
     M5.Display.setTextColor(TFT_DARKGRAY);
     String pageInfo = String(_currentPage + 1) + " / " + String(_totalPages);
     int pageInfoW = M5.Display.textWidth(pageInfo.c_str());
-    M5.Display.setCursor((SCREEN_WIDTH - pageInfoW) / 2, buttonY);
-    M5.Display.print(pageInfo);
+    UI::drawBoldText(pageInfo.c_str(), (SCREEN_WIDTH - pageInfoW) / 2, buttonY);
 
-    // Next button (right)
+    // Next button (right, bold)
     if (_currentPage < _totalPages - 1) {
         M5.Display.setTextColor(TFT_BLACK);
         String nextText = "다음 >";
         int nextW = M5.Display.textWidth(nextText.c_str());
-        M5.Display.setCursor(SCREEN_WIDTH - PAD_X - nextW - 20, buttonY);
-        M5.Display.print(nextText);
+        UI::drawBoldText(nextText.c_str(), SCREEN_WIDTH - PAD_X - nextW - 20, buttonY);
     }
 }
 
@@ -526,7 +671,7 @@ void CopyScreen::drawEmptyState() {
     M5.Display.fillRect(0, 0, SCREEN_WIDTH, availableHeight, TFT_WHITE);
 
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
     M5.Display.setTextColor(TFT_BLACK);
 
     auto dt = M5.Rtc.getDateTime();
@@ -534,24 +679,20 @@ void CopyScreen::drawEmptyState() {
 
     int centerY = availableHeight / 2;
 
-    M5.Display.setCursor(PAD_X, centerY - 80);
-    M5.Display.printf("%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
+    char dateBuf[32];
+    snprintf(dateBuf, sizeof(dateBuf), "%d月%d日 (Day %d)", dt.date.month, dt.date.date, dayOfYear);
+    UI::drawBoldText(dateBuf, PAD_X, centerY - 80);
 
-    M5.Display.setCursor(PAD_X, centerY - 40);
-    M5.Display.println("오늘의 필사 내용이 없습니다");
+    UI::drawBoldText("오늘의 필사 내용이 없습니다", PAD_X, centerY - 40);
 
-    M5.Display.setTextSize(0.9);
-    M5.Display.setCursor(PAD_X, centerY + 10);
-    M5.Display.println("필요한 파일:");
+    M5.Display.setTextSize(UI::SIZE_BODY);
+    UI::drawBoldText("필요한 파일:", PAD_X, centerY + 10);
 
-    M5.Display.setCursor(PAD_X + 20, centerY + 45);
-    M5.Display.println("- /books/365*.epub (EPUB 형식)");
+    UI::drawBoldText("- /books/365*.epub (EPUB 형식)", PAD_X + 20, centerY + 45);
 
-    M5.Display.setCursor(PAD_X + 20, centerY + 75);
-    M5.Display.println("- /books/365.txt (텍스트 형식)");
+    UI::drawBoldText("- /books/365.txt (텍스트 형식)", PAD_X + 20, centerY + 75);
 
-    M5.Display.setCursor(PAD_X, centerY + 115);
-    M5.Display.println("설정 > WiFi 파일 전송으로 업로드하세요");
+    UI::drawBoldText("설정 > WiFi 파일 전송으로 업로드하세요", PAD_X, centerY + 115);
 }
 
 void CopyScreen::draw() {
@@ -580,34 +721,226 @@ bool CopyScreen::handleTouchStart(int x, int y) {
 
     int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
     int navY = availableHeight - NAV_HEIGHT;
+    int contentY = HEADER_HEIGHT;
 
-    // Only handle touches in navigation area (above tab bar)
-    if (y < navY || y >= availableHeight) {
-        return false;
+    // Handle popup menu touch first
+    if (_popupMenu.isVisible()) {
+        PopupMenu::Action action = _popupMenu.handleTouch(x, y);
+        if (action != PopupMenu::NONE) {
+            handlePopupAction(action);
+            return true;
+        }
     }
 
-    bool pageChanged = false;
-
-    // Left side - previous page
-    if (x < SCREEN_WIDTH / 3 && _currentPage > 0) {
-        _currentPage--;
-        pageChanged = true;
-    }
-    // Right side - next page
-    else if (x > SCREEN_WIDTH * 2 / 3 && _currentPage < _totalPages - 1) {
-        _currentPage++;
-        pageChanged = true;
+    // Content area touch - text selection
+    if (y >= contentY && y < navY) {
+        handleWordSelection(x, y);
+        return true;
     }
 
-    if (pageChanged) {
-        // Direct draw without explicit display() - avoids flicker and ghosting
-        M5.Display.startWrite();
-        drawPageContent();
-        drawNavigation();
-        M5.Display.endWrite();
-        // Return false to prevent main loop from triggering aggressive refresh
-        return false;
+    // Navigation area touch
+    if (y >= navY && y < availableHeight) {
+        // Clear any selection when navigating
+        if (_textLayout.hasSelection()) {
+            _textLayout.clearSelection();
+            _popupMenu.hide();
+        }
+
+        bool pageChanged = false;
+        bool chapterChanged = false;
+
+        // Left side - previous page/chapter
+        if (x < SCREEN_WIDTH / 3) {
+            if (_currentPage > 0) {
+                _currentPage--;
+                pageChanged = true;
+            } else if (_readingMode == ReadingMode::SEQUENTIAL && _currentChapter > _chapterOffset) {
+                // Go to previous chapter
+                _currentChapter--;
+                chapterChanged = true;
+            }
+        }
+        // Right side - next page/chapter
+        else if (x > SCREEN_WIDTH * 2 / 3) {
+            if (_currentPage < _totalPages - 1) {
+                _currentPage++;
+                pageChanged = true;
+            } else if (_readingMode == ReadingMode::SEQUENTIAL &&
+                       _currentChapter < _epubParser.getChapterCount() - 1) {
+                // Go to next chapter
+                _currentChapter++;
+                _currentPage = 0;
+                chapterChanged = true;
+            }
+        }
+
+        if (chapterChanged) {
+            // Reload content for new chapter
+            loadTodayContent();
+            saveReadingProgress();
+            return true;
+        }
+
+        if (pageChanged) {
+            // Save progress when page changes in Sequential mode
+            if (_readingMode == ReadingMode::SEQUENTIAL) {
+                saveReadingProgress();
+            }
+            // Direct draw without explicit display() - avoids flicker and ghosting
+            M5.Display.startWrite();
+            drawPageContent();
+            drawNavigation();
+            M5.Display.endWrite();
+            return false;
+        }
     }
 
     return false;
+}
+
+void CopyScreen::handleWordSelection(int x, int y) {
+    WordInfo word;
+
+    if (_textLayout.findWordAt(x, y, word)) {
+        // Set selection
+        _textLayout.setSelection(word);
+
+        // Show popup menu above the word
+        int popupX = word.x + word.width / 2;
+        int popupY = word.y;
+        _popupMenu.show(popupX, popupY, word.text);
+
+        // Redraw to show highlight and popup
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
+        drawPageContent();
+        M5.Display.endWrite();
+
+        Serial.printf("Selected word: '%s'\n", word.text.c_str());
+    } else {
+        // Touch on empty area - clear selection
+        if (_textLayout.hasSelection() || _popupMenu.isVisible()) {
+            _textLayout.clearSelection();
+            _popupMenu.hide();
+
+            // Redraw to remove highlight
+            M5.Display.setEpdMode(epd_mode_t::epd_fast);
+            M5.Display.startWrite();
+            drawPageContent();
+            M5.Display.endWrite();
+        }
+    }
+}
+
+void CopyScreen::handlePopupAction(PopupMenu::Action action) {
+    String selectedText = _popupMenu.getSelectedText();
+
+    switch (action) {
+        case PopupMenu::SEARCH:
+            // TODO: Phase 4 - Dictionary search
+            Serial.printf("Search: %s\n", selectedText.c_str());
+            break;
+
+        case PopupMenu::SAVE:
+            saveToVocabulary(selectedText);
+            Serial.printf("Saved to vocabulary: %s\n", selectedText.c_str());
+            break;
+
+        case PopupMenu::GRAMMAR:
+            saveToGrammar(selectedText);
+            Serial.printf("Saved to grammar: %s\n", selectedText.c_str());
+            break;
+
+        case PopupMenu::CANCEL:
+        default:
+            break;
+    }
+
+    // Clear selection and hide popup
+    _textLayout.clearSelection();
+    _popupMenu.hide();
+
+    // Redraw
+    M5.Display.setEpdMode(epd_mode_t::epd_fast);
+    M5.Display.startWrite();
+    drawPageContent();
+    M5.Display.endWrite();
+}
+
+void CopyScreen::saveToVocabulary(const String& word) {
+    // Save word to vocabulary file in LittleFS
+    File file = LittleFS.open("/userdata/vocabulary.txt", FILE_APPEND);
+    if (file) {
+        file.println(word);
+        file.close();
+    }
+}
+
+void CopyScreen::saveToGrammar(const String& text) {
+    // Save text to grammar patterns file in LittleFS
+    File file = LittleFS.open("/userdata/grammar.txt", FILE_APPEND);
+    if (file) {
+        file.println(text);
+        file.close();
+    }
+}
+
+void CopyScreen::loadReadingProgress() {
+    // Load saved reading progress from LittleFS
+    // Format: <epub_filename>:<chapter>:<page>
+    File file = LittleFS.open("/userdata/reading_progress.txt", FILE_READ);
+    if (!file) {
+        Serial.println("CopyScreen: No saved reading progress");
+        _currentChapter = _chapterOffset;  // Start from first content chapter
+        _currentPage = 0;
+        return;
+    }
+
+    String line = file.readStringUntil('\n');
+    file.close();
+
+    // Parse: filename:chapter:page
+    int sep1 = line.indexOf(':');
+    int sep2 = line.indexOf(':', sep1 + 1);
+
+    if (sep1 > 0 && sep2 > sep1) {
+        String savedEpub = line.substring(0, sep1);
+        String epubName = _epubPath.substring(_epubPath.lastIndexOf('/') + 1);
+
+        if (savedEpub == epubName) {
+            _currentChapter = line.substring(sep1 + 1, sep2).toInt();
+            _currentPage = line.substring(sep2 + 1).toInt();
+            Serial.printf("CopyScreen: Loaded progress - chapter=%d, page=%d\n",
+                          _currentChapter, _currentPage);
+        } else {
+            Serial.printf("CopyScreen: Different book, starting fresh (saved=%s, current=%s)\n",
+                          savedEpub.c_str(), epubName.c_str());
+            _currentChapter = _chapterOffset;
+            _currentPage = 0;
+        }
+    } else {
+        _currentChapter = _chapterOffset;
+        _currentPage = 0;
+    }
+}
+
+void CopyScreen::saveReadingProgress() {
+    // Only save in Sequential mode
+    if (_readingMode != ReadingMode::SEQUENTIAL) {
+        return;
+    }
+
+    // Ensure directory exists
+    if (!LittleFS.exists("/userdata")) {
+        LittleFS.mkdir("/userdata");
+    }
+
+    File file = LittleFS.open("/userdata/reading_progress.txt", FILE_WRITE);
+    if (file) {
+        String epubName = _epubPath.substring(_epubPath.lastIndexOf('/') + 1);
+        file.printf("%s:%d:%d\n", epubName.c_str(), _currentChapter, _currentPage);
+        file.close();
+        Serial.printf("CopyScreen: Saved progress - chapter=%d, page=%d\n",
+                      _currentChapter, _currentPage);
+    }
 }

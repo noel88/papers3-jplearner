@@ -1,5 +1,6 @@
 #include "screens/SettingsScreen.h"
 #include "Config.h"
+#include "UIHelpers.h"
 #include <M5Unified.h>
 #include <SD.h>
 
@@ -84,15 +85,14 @@ void SettingsScreen::drawMainMenu() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Title
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
-    M5.Display.print("설정");
+    // Title (bold)
+    M5.Display.setTextSize(UI::SIZE_TITLE);
+    UI::drawBoldText("설정", PAD_X, PAD_Y);
 
     // Divider
     M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
     int y = ITEMS_START_Y;
 
     // Menu items
@@ -112,9 +112,8 @@ void SettingsScreen::drawMainMenu() {
             M5.Display.fillRect(0, y, SCREEN_WIDTH, ITEM_HEIGHT - 1, 0xF7BE);
         }
 
-        // Draw item label
-        M5.Display.setCursor(PAD_X, y + 15);
-        M5.Display.print(menuItems[i]);
+        // Draw item label (bold)
+        UI::drawBoldText(menuItems[i], PAD_X, y + 15);
 
         // Draw arrow
         M5.Display.setCursor(SCREEN_WIDTH - 60, y + 15);
@@ -136,26 +135,26 @@ void SettingsScreen::drawWiFiAPSettings() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Title with back button
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
-    M5.Display.print("< WiFi 파일 전송");
+    // Title with back button (bold)
+    M5.Display.setTextSize(UI::SIZE_TITLE);
+    UI::drawBoldText("< WiFi 파일 전송", PAD_X, PAD_Y);
     M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
     int y = ITEMS_START_Y + 10;
 
-    // Current AP settings
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("현재 설정:");
+    // Current AP settings (bold)
+    UI::drawBoldText("현재 설정:", PAD_X, y);
     y += 40;
 
-    M5.Display.setCursor(PAD_X + 20, y);
-    M5.Display.printf("SSID: %s", config.apSsid.c_str());
+    char ssidBuf[64];
+    snprintf(ssidBuf, sizeof(ssidBuf), "SSID: %s", config.apSsid.c_str());
+    UI::drawBoldText(ssidBuf, PAD_X + 20, y);
     y += 35;
 
-    M5.Display.setCursor(PAD_X + 20, y);
-    M5.Display.printf("비밀번호: %s", config.apPassword.c_str());
+    char pwBuf[64];
+    snprintf(pwBuf, sizeof(pwBuf), "비밀번호: %s", config.apPassword.c_str());
+    UI::drawBoldText(pwBuf, PAD_X + 20, y);
     y += 50;
 
     // Start button
@@ -196,30 +195,27 @@ void SettingsScreen::drawWiFiSTASettings() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Title with back button
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
-    M5.Display.print("< WiFi 연결 설정");
+    // Title with back button (bold)
+    M5.Display.setTextSize(UI::SIZE_TITLE);
+    UI::drawBoldText("< WiFi 연결 설정", PAD_X, PAD_Y);
     M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
-    M5.Display.setTextSize(1.0);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
     int y = ITEMS_START_Y + 10;
 
-    // Current Station settings
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("외부 WiFi 연결:");
+    // Current Station settings (bold)
+    UI::drawBoldText("외부 WiFi 연결:", PAD_X, y);
     y += 40;
 
     if (config.staSsid.length() > 0) {
-        M5.Display.setCursor(PAD_X + 20, y);
-        M5.Display.printf("SSID: %s", config.staSsid.c_str());
+        char ssidBuf[64];
+        snprintf(ssidBuf, sizeof(ssidBuf), "SSID: %s", config.staSsid.c_str());
+        UI::drawBoldText(ssidBuf, PAD_X + 20, y);
         y += 35;
 
-        M5.Display.setCursor(PAD_X + 20, y);
-        M5.Display.print("상태: 설정됨");
+        UI::drawBoldText("상태: 설정됨", PAD_X + 20, y);
     } else {
-        M5.Display.setCursor(PAD_X + 20, y);
-        M5.Display.print("설정된 네트워크 없음");
+        UI::drawBoldText("설정된 네트워크 없음", PAD_X + 20, y);
     }
     y += 50;
 
@@ -230,11 +226,10 @@ void SettingsScreen::drawWiFiSTASettings() {
     int btnX = (SCREEN_WIDTH - btnW) / 2;
 
     M5.Display.drawRect(btnX, btnY, btnW, btnH, TFT_BLACK);
-    M5.Display.setTextSize(1.1);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
 
     int textW = M5.Display.textWidth("WiFi 스캔");
-    M5.Display.setCursor(btnX + (btnW - textW) / 2, btnY + 12);
-    M5.Display.print("WiFi 스캔");
+    UI::drawBoldText("WiFi 스캔", btnX + (btnW - textW) / 2, btnY + 12);
 
     M5.Display.setTextSize(1.0);
 
@@ -252,20 +247,29 @@ void SettingsScreen::drawWiFiSTASettings() {
 
 void SettingsScreen::drawDisplaySettings() {
     clearContentArea();
-    drawCenteredText("화면 설정", CONTENT_HEIGHT / 2 - 40);
-    drawCenteredText("< 뒤로가기: 상단 터치", CONTENT_HEIGHT / 2 + 20);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(UI::SIZE_TITLE);
+    UI::drawBoldTextCentered("화면 설정", CONTENT_HEIGHT / 2 - 40);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
+    UI::drawBoldTextCentered("< 뒤로가기: 상단 터치", CONTENT_HEIGHT / 2 + 20);
 }
 
 void SettingsScreen::drawLearningSettings() {
     clearContentArea();
-    drawCenteredText("학습 설정", CONTENT_HEIGHT / 2 - 40);
-    drawCenteredText("< 뒤로가기: 상단 터치", CONTENT_HEIGHT / 2 + 20);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(UI::SIZE_TITLE);
+    UI::drawBoldTextCentered("학습 설정", CONTENT_HEIGHT / 2 - 40);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
+    UI::drawBoldTextCentered("< 뒤로가기: 상단 터치", CONTENT_HEIGHT / 2 + 20);
 }
 
 void SettingsScreen::drawSystemSettings() {
     clearContentArea();
-    drawCenteredText("시스템 설정", CONTENT_HEIGHT / 2 - 40);
-    drawCenteredText("< 뒤로가기: 상단 터치", CONTENT_HEIGHT / 2 + 20);
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(UI::SIZE_TITLE);
+    UI::drawBoldTextCentered("시스템 설정", CONTENT_HEIGHT / 2 - 40);
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
+    UI::drawBoldTextCentered("< 뒤로가기: 상단 터치", CONTENT_HEIGHT / 2 + 20);
 }
 
 // ============================================
@@ -398,10 +402,9 @@ void SettingsScreen::drawDailyEpubSettings() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Title with back button
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
-    M5.Display.print("< 필사 EPUB 선택");
+    // Title with back button (bold)
+    M5.Display.setTextSize(UI::SIZE_TITLE);
+    UI::drawBoldText("< 필사 EPUB 선택", PAD_X, PAD_Y);
     M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
     // Current selection info
@@ -471,7 +474,7 @@ void SettingsScreen::drawDailyEpubSettings() {
 
     if (needsPaging) {
         M5.Display.setFont(&fonts::efontKR_24);
-        M5.Display.setTextSize(1.0);
+        M5.Display.setTextSize(UI::SIZE_CONTENT);
 
         int btnY = y + 10;  // Right after the list
         int btnW = 180;
@@ -481,8 +484,7 @@ void SettingsScreen::drawDailyEpubSettings() {
         if (_epubScrollOffset > 0) {
             M5.Display.fillRect(PAD_X, btnY, btnW, btnH, TFT_BLACK);
             M5.Display.setTextColor(TFT_WHITE);
-            M5.Display.setCursor(PAD_X + 40, btnY + 12);
-            M5.Display.print("< 이전");
+            UI::drawBoldText("< 이전", PAD_X + 40, btnY + 12);
         }
 
         // Next page button
@@ -490,8 +492,7 @@ void SettingsScreen::drawDailyEpubSettings() {
         if (_epubScrollOffset + maxVisible < _epubFiles.size()) {
             M5.Display.fillRect(nextBtnX, btnY, btnW, btnH, TFT_BLACK);
             M5.Display.setTextColor(TFT_WHITE);
-            M5.Display.setCursor(nextBtnX + 40, btnY + 12);
-            M5.Display.print("다음 >");
+            UI::drawBoldText("다음 >", nextBtnX + 40, btnY + 12);
         }
 
         M5.Display.setTextColor(TFT_BLACK);
@@ -615,13 +616,12 @@ void SettingsScreen::drawFontSettings() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextColor(TFT_BLACK);
 
-    // Title with back button
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(PAD_X, PAD_Y);
+    // Title with back button (bold)
+    M5.Display.setTextSize(UI::SIZE_TITLE);
     if (_selectingFallback) {
-        M5.Display.print("< 대체 폰트 선택");
+        UI::drawBoldText("< 대체 폰트 선택", PAD_X, PAD_Y);
     } else {
-        M5.Display.print("< 폰트 설정");
+        UI::drawBoldText("< 폰트 설정", PAD_X, PAD_Y);
     }
     M5.Display.drawLine(PAD_X, 50, SCREEN_WIDTH - PAD_X, 50, TFT_BLACK);
 
@@ -675,9 +675,8 @@ void SettingsScreen::drawFontSettings() {
         M5.Display.setTextColor(TFT_BLACK);
     }
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(0.9);
-    M5.Display.setCursor(PAD_X + 20, y + 10);
-    M5.Display.print("기본 폰트");
+    M5.Display.setTextSize(UI::SIZE_CONTENT);
+    UI::drawBoldText("기본 폰트", PAD_X + 20, y + 10);
 
     // Fallback font button
     bool fallbackSelected = _selectingFallback;
@@ -688,8 +687,7 @@ void SettingsScreen::drawFontSettings() {
         M5.Display.drawRect(PAD_X + btnW + gap, y, btnW, btnH, TFT_BLACK);
         M5.Display.setTextColor(TFT_BLACK);
     }
-    M5.Display.setCursor(PAD_X + btnW + gap + 20, y + 10);
-    M5.Display.print("대체 폰트");
+    UI::drawBoldText("대체 폰트", PAD_X + btnW + gap + 20, y + 10);
 
     M5.Display.setTextColor(TFT_BLACK);
     M5.Display.setTextSize(0.8);
@@ -745,7 +743,7 @@ void SettingsScreen::drawFontSettings() {
     bool needsPaging = _fontFiles.size() > maxVisible;
     if (needsPaging) {
         M5.Display.setFont(&fonts::efontKR_24);
-        M5.Display.setTextSize(1.0);
+        M5.Display.setTextSize(UI::SIZE_CONTENT);
 
         int btnY = y + 10;
         int navBtnW = 150;
@@ -755,8 +753,7 @@ void SettingsScreen::drawFontSettings() {
         if (_fontScrollOffset > 0) {
             M5.Display.fillRect(PAD_X, btnY, navBtnW, navBtnH, TFT_BLACK);
             M5.Display.setTextColor(TFT_WHITE);
-            M5.Display.setCursor(PAD_X + 35, btnY + 10);
-            M5.Display.print("< 이전");
+            UI::drawBoldText("< 이전", PAD_X + 35, btnY + 10);
         }
 
         // Next
@@ -764,8 +761,7 @@ void SettingsScreen::drawFontSettings() {
         if (_fontScrollOffset + maxVisible < _fontFiles.size()) {
             M5.Display.fillRect(nextBtnX, btnY, navBtnW, navBtnH, TFT_BLACK);
             M5.Display.setTextColor(TFT_WHITE);
-            M5.Display.setCursor(nextBtnX + 35, btnY + 10);
-            M5.Display.print("다음 >");
+            UI::drawBoldText("다음 >", nextBtnX + 35, btnY + 10);
         }
 
         M5.Display.setTextColor(TFT_BLACK);

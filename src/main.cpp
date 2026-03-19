@@ -17,6 +17,7 @@
 #include "Config.h"
 #include "FontManager.h"
 #include "WebUI.h"
+#include "UIHelpers.h"
 
 // ============================================
 // Hardware Configuration
@@ -280,7 +281,7 @@ void drawTabBar() {
     M5.Display.drawLine(0, tabY, SCREEN_WIDTH, tabY, TFT_BLACK);
 
     M5.Display.setFont(&fonts::efontKR_24);
-    M5.Display.setTextSize(0.8);
+    M5.Display.setTextSize(UI::SIZE_BODY);
 
     for (int i = 0; i < TAB_COUNT; i++) {
         int tabX = i * TAB_WIDTH;
@@ -296,8 +297,8 @@ void drawTabBar() {
         int labelX = tabX + (TAB_WIDTH - labelWidth) / 2;
         int labelY = tabY + (TAB_BAR_HEIGHT - M5.Display.fontHeight()) / 2;
 
-        M5.Display.setCursor(labelX, labelY);
-        M5.Display.print(TAB_LABELS[i]);
+        // Draw bold tab label
+        UI::drawBoldText(TAB_LABELS[i], labelX, labelY);
     }
 
     M5.Display.setTextColor(TFT_BLACK);

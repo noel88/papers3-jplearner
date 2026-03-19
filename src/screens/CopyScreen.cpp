@@ -19,7 +19,11 @@ CopyScreen::CopyScreen()
       _totalPages(0),
       _chapterOffset(-1),
       _readingMode(ReadingMode::DAILY),
-      _currentChapter(0) {
+      _currentChapter(0),
+      _touchStartX(0),
+      _touchStartY(0),
+      _touchStartTime(0),
+      _touchInContentArea(false) {
 }
 
 void CopyScreen::onEnter() {
@@ -583,11 +587,6 @@ void CopyScreen::drawPageContent() {
             // Record line position for text selection
             _textLayout.addLine(i, bytePos, lineEnd, PAD_X, y, lineWidth, fontH + LINE_SPACING, lineText);
 
-            // Draw highlight if this line contains selection
-            if (_textLayout.hasSelection()) {
-                _textLayout.drawHighlight();
-            }
-
             // Draw this line
             if (useCustomFont) {
                 fm.drawString(lineText, PAD_X, y);
@@ -603,7 +602,12 @@ void CopyScreen::drawPageContent() {
         y += PARAGRAPH_SPACING - LINE_SPACING;  // Extra space between paragraphs
     }
 
-    // Draw popup menu if visible
+    // Draw selection highlight on top of text (inverted style)
+    if (_textLayout.hasSelection()) {
+        _textLayout.drawHighlight();
+    }
+
+    // Draw popup menu if visible (on top of everything)
     if (_popupMenu.isVisible()) {
         _popupMenu.draw();
     }
@@ -710,15 +714,23 @@ bool CopyScreen::handleTouchStart(int x, int y) {
             handlePopupAction(action);
             return true;
         }
-    }
-
-    // Content area touch - text selection
-    if (y >= contentY && y < navY) {
-        handleWordSelection(x, y);
+        // Touch outside popup - dismiss it
+        _textLayout.clearSelection();
+        _popupMenu.hide();
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
+        drawPageContent();
+        M5.Display.endWrite();
         return true;
     }
 
-    // Navigation area touch
+    // Record touch start for long press detection
+    _touchStartX = x;
+    _touchStartY = y;
+    _touchStartTime = millis();
+    _touchInContentArea = (y >= contentY && y < navY);
+
+    // Navigation area touch - handle immediately
     if (y >= navY && y < availableHeight) {
         // Clear any selection when navigating
         if (_textLayout.hasSelection()) {
@@ -773,6 +785,46 @@ bool CopyScreen::handleTouchStart(int x, int y) {
             M5.Display.endWrite();
             return false;
         }
+    }
+
+    // Content area touch - don't select immediately, wait for long press
+    return false;
+}
+
+bool CopyScreen::handleTouchMove(int x, int y) {
+    // If user moves finger too much, cancel long press detection
+    if (_touchInContentArea) {
+        int dx = abs(x - _touchStartX);
+        int dy = abs(y - _touchStartY);
+        if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+            _touchInContentArea = false;  // Cancel long press
+        }
+    }
+    return false;
+}
+
+bool CopyScreen::handleTouchEnd() {
+    if (!_touchInContentArea) {
+        return false;
+    }
+
+    unsigned long pressDuration = millis() - _touchStartTime;
+
+    // Long press in content area - trigger word selection
+    if (pressDuration >= LONG_PRESS_MS) {
+        handleWordSelection(_touchStartX, _touchStartY);
+        return true;
+    }
+
+    // Short tap in content area - clear selection if any
+    if (_textLayout.hasSelection()) {
+        _textLayout.clearSelection();
+        _popupMenu.hide();
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
+        drawPageContent();
+        M5.Display.endWrite();
+        return true;
     }
 
     return false;

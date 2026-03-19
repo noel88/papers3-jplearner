@@ -43,6 +43,8 @@ public:
     void onEnter() override;
     void draw() override;
     bool handleTouchStart(int x, int y) override;
+    bool handleTouchMove(int x, int y) override;
+    bool handleTouchEnd() override;
 
     // ============================================
     // Content Loading
@@ -76,6 +78,14 @@ private:
     // Text selection
     TextLayout _textLayout;
     PopupMenu _popupMenu;
+
+    // Touch tracking for long press detection
+    int _touchStartX;
+    int _touchStartY;
+    unsigned long _touchStartTime;
+    bool _touchInContentArea;
+    static constexpr unsigned long LONG_PRESS_MS = 400;  // 400ms for long press
+    static constexpr int TOUCH_MOVE_THRESHOLD = 20;      // Max movement for long press
 
     // Drawing methods
     void drawHeader();

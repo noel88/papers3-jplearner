@@ -208,14 +208,24 @@ bool TextLayout::getSelectionBounds(int& x, int& y, int& w, int& h) const {
 void TextLayout::drawHighlight() {
     if (!_hasSelection) return;
 
-    // Draw gray background behind selected text
+    // Draw inverted background (black) for clear visibility on e-ink
+    int padding = 4;
     M5.Display.fillRect(
-        _selection.x - 2,
+        _selection.x - padding,
         _selection.y - 2,
-        _selection.width + 4,
-        _selection.height + 4,
-        TFT_LIGHTGRAY
+        _selection.width + padding * 2,
+        _selection.height,
+        TFT_BLACK
     );
+
+    // Draw the selected text in white (inverted) using M5.Display
+    // This works for both custom font and built-in font display
+    M5.Display.setTextColor(TFT_WHITE);
+    M5.Display.setFont(&fonts::efontJA_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setCursor(_selection.x, _selection.y);
+    M5.Display.print(_selection.text);
+    M5.Display.setTextColor(TFT_BLACK);  // Reset
 }
 
 int TextLayout::getByteXPosition(const LineInfo& line, int bytePos) {

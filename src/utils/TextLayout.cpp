@@ -198,99 +198,104 @@ void TextLayout::setRangeSelection(const WordInfo& start, const WordInfo& end) {
         last = &start;
     }
 
-    // Build combined text from first to last word
+    // If same word, just use single selection
+    if (first->x == last->x && first->y == last->y) {
+        setSelection(start);
+        return;
+    }
+
+    // Simple approach: find all text between the two positions
     String combinedText;
-    bool inRange = false;
-    bool foundEnd = false;
 
     for (const auto& line : _lines) {
-        if (foundEnd) break;
-
         int lineY = line.y;
+        int lineEndY = line.y + line.height;
 
-        // Check if this line is in the selection range
-        bool lineInRange = (lineY > first->y && lineY < last->y) ||
-                          (lineY == first->y && lineY == last->y) ||
-                          (lineY == first->y && first->y != last->y) ||
-                          (lineY == last->y && first->y != last->y);
+        // Skip lines before selection
+        if (lineEndY <= first->y) continue;
+        // Stop after last line
+        if (lineY > last->y + last->height) break;
 
-        if (!lineInRange) continue;
+        // This line is in selection range
+        if (combinedText.length() > 0) combinedText += "";
 
-        // For lines in range, extract relevant portion
+        // Same line as start and end
         if (lineY == first->y && lineY == last->y) {
-            // Same line - extract from first.x to last.x + last.width
-            int startByte = 0;
-            int endByte = line.text.length();
-
-            // Find start byte position
-            int charX = line.x;
-            int bytePos = 0;
-            while (bytePos < (int)line.text.length()) {
-                if (charX >= first->x) {
-                    startByte = bytePos;
-                    break;
-                }
-                int charLen = 1;
-                uint8_t c = line.text[bytePos];
-                if (c >= 0xF0) charLen = 4;
-                else if (c >= 0xE0) charLen = 3;
-                else if (c >= 0xC0) charLen = 2;
-
-                String sub = line.text.substring(0, bytePos + charLen);
-                charX = line.x + M5.Display.textWidth(sub.c_str());
-                bytePos += charLen;
-            }
-
-            // Find end byte position
-            charX = line.x;
-            bytePos = 0;
-            while (bytePos < (int)line.text.length()) {
-                if (charX >= last->x + last->width) {
-                    endByte = bytePos;
-                    break;
-                }
-                int charLen = 1;
-                uint8_t c = line.text[bytePos];
-                if (c >= 0xF0) charLen = 4;
-                else if (c >= 0xE0) charLen = 3;
-                else if (c >= 0xC0) charLen = 2;
-                bytePos += charLen;
-
-                String sub = line.text.substring(0, bytePos);
-                charX = line.x + M5.Display.textWidth(sub.c_str());
-            }
-
-            combinedText = line.text.substring(startByte, endByte);
-            foundEnd = true;
-        } else if (lineY == first->y) {
-            // First line of multi-line selection
-            inRange = true;
-            combinedText = line.text;  // Simplified: take whole line
-        } else if (lineY == last->y) {
-            // Last line of multi-line selection
-            if (combinedText.length() > 0) combinedText += " ";
-            combinedText += line.text;  // Simplified: take whole line
-            foundEnd = true;
-        } else if (inRange) {
-            // Middle line
-            if (combinedText.length() > 0) combinedText += " ";
+            // Extract text between first.x and last.x + last.width
+            combinedText += extractTextInRange(line, first->x, last->x + last->width);
+        }
+        // First line of selection
+        else if (lineY == first->y) {
+            combinedText += extractTextInRange(line, first->x, line.x + line.width);
+        }
+        // Last line of selection
+        else if (lineY == last->y) {
+            combinedText += extractTextInRange(line, line.x, last->x + last->width);
+        }
+        // Middle lines - take whole line
+        else if (lineY > first->y && lineY < last->y) {
             combinedText += line.text;
         }
     }
 
-    // Create selection spanning from first to last
+    // Create selection bounds
     _selection.x = first->x;
     _selection.y = first->y;
-    _selection.width = (first->y == last->y) ?
-        (last->x + last->width - first->x) :
-        (SCREEN_WIDTH - PAD_X - first->x);  // To end of first line
-    _selection.height = last->y + last->height - first->y;
+
+    if (first->y == last->y) {
+        // Same line
+        _selection.width = last->x + last->width - first->x;
+        _selection.height = first->height;
+    } else {
+        // Multiple lines
+        _selection.width = SCREEN_WIDTH - PAD_X - first->x;
+        _selection.height = last->y + last->height - first->y;
+    }
+
     _selection.text = combinedText.length() > 0 ? combinedText : first->text;
     _selection.paraIndex = first->paraIndex;
     _selection.byteStart = first->byteStart;
     _selection.byteEnd = last->byteEnd;
 
     _hasSelection = true;
+}
+
+String TextLayout::extractTextInRange(const LineInfo& line, int startX, int endX) {
+    // Extract text from line between startX and endX
+    String result;
+    int charX = line.x;
+    int bytePos = 0;
+    int startByte = -1;
+    int endByte = line.text.length();
+
+    while (bytePos < (int)line.text.length()) {
+        // Get character width
+        int charLen = 1;
+        uint8_t c = line.text[bytePos];
+        if (c >= 0xF0) charLen = 4;
+        else if (c >= 0xE0) charLen = 3;
+        else if (c >= 0xC0) charLen = 2;
+
+        String sub = line.text.substring(0, bytePos + charLen);
+        int nextX = line.x + M5.Display.textWidth(sub.c_str());
+
+        // Check if this character is in range
+        if (startByte < 0 && nextX > startX) {
+            startByte = bytePos;
+        }
+        if (nextX >= endX) {
+            endByte = bytePos + charLen;
+            break;
+        }
+
+        bytePos += charLen;
+    }
+
+    if (startByte >= 0 && startByte < endByte) {
+        result = line.text.substring(startByte, endByte);
+    }
+
+    return result;
 }
 
 void TextLayout::clearSelection() {
@@ -315,24 +320,58 @@ bool TextLayout::getSelectionBounds(int& x, int& y, int& w, int& h) const {
 void TextLayout::drawHighlight() {
     if (!_hasSelection) return;
 
-    // Draw inverted background (black) for clear visibility on e-ink
-    int padding = 4;
-    M5.Display.fillRect(
-        _selection.x - padding,
-        _selection.y - 2,
-        _selection.width + padding * 2,
-        _selection.height,
-        TFT_BLACK
-    );
+    int padding = 2;
 
-    // Draw the selected text in white (inverted) using M5.Display
-    // This works for both custom font and built-in font display
-    M5.Display.setTextColor(TFT_WHITE);
-    M5.Display.setFont(&fonts::efontJA_24);
-    M5.Display.setTextSize(1.0);
-    M5.Display.setCursor(_selection.x, _selection.y);
-    M5.Display.print(_selection.text);
-    M5.Display.setTextColor(TFT_BLACK);  // Reset
+    // For multi-line selection, highlight each line separately
+    for (const auto& line : _lines) {
+        int lineY = line.y;
+
+        // Skip lines outside selection
+        if (lineY + line.height <= _selection.y) continue;
+        if (lineY > _selection.y + _selection.height) break;
+
+        // Calculate highlight bounds for this line
+        int hlX, hlW;
+        String hlText;
+
+        if (lineY == _selection.y && _selection.height <= line.height) {
+            // Single line selection
+            hlX = _selection.x;
+            hlW = _selection.width;
+            hlText = _selection.text;
+        } else if (lineY == _selection.y) {
+            // First line of multi-line
+            hlX = _selection.x;
+            hlW = line.x + line.width - _selection.x;
+            hlText = extractTextInRange(line, hlX, hlX + hlW);
+        } else if (lineY + line.height >= _selection.y + _selection.height) {
+            // Last line of multi-line
+            hlX = line.x;
+            int endX = _selection.x + _selection.width;
+            if (endX > line.x + line.width) endX = line.x + line.width;
+            hlW = endX - hlX;
+            hlText = extractTextInRange(line, hlX, endX);
+        } else {
+            // Middle line - full width
+            hlX = line.x;
+            hlW = line.width;
+            hlText = line.text;
+        }
+
+        if (hlW <= 0) continue;
+
+        // Draw black background
+        M5.Display.fillRect(hlX - padding, lineY - 2, hlW + padding * 2, line.height, TFT_BLACK);
+
+        // Draw white text on top
+        M5.Display.setTextColor(TFT_WHITE);
+        M5.Display.setFont(&fonts::efontJA_24);
+        M5.Display.setTextSize(1.0);
+        M5.Display.setCursor(hlX, lineY);
+        M5.Display.print(hlText);
+    }
+
+    M5.Display.setTextColor(TFT_BLACK);
 }
 
 int TextLayout::getByteXPosition(const LineInfo& line, int bytePos) {

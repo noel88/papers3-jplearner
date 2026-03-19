@@ -81,4 +81,7 @@ private:
 
     // Calculate X position of byte within line
     int getByteXPosition(const LineInfo& line, int bytePos);
+
+    // Extract text from line within X range
+    String extractTextInRange(const LineInfo& line, int startX, int endX);
 };

@@ -14,6 +14,7 @@
 #include "screens/ReadScreen.h"
 #include "screens/SettingsScreen.h"
 #include "screens/PlaceholderScreen.h"
+#include "screens/SRSScreen.h"
 #include "Config.h"
 #include "FontManager.h"
 #include "WebUI.h"
@@ -68,8 +69,8 @@ Config config;
 CopyScreen copyScreen;
 ReadScreen readScreen;
 SettingsScreen settingsScreen;
-PlaceholderScreen wordScreen("Word", "단어 학습", "Coming soon - SRS 단어 학습");
-PlaceholderScreen grammarScreen("Grammar", "문형 학습", "Coming soon - N2/N1 문법 패턴");
+SRSScreen wordScreen;
+SRSScreen grammarScreen;
 PlaceholderScreen statsScreen("Stats", "학습 통계", "Coming soon - 학습 진행 현황");
 
 // ============================================

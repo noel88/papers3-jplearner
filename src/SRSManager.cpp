@@ -3,7 +3,14 @@
 #include <M5Unified.h>
 
 void SRSManager::init() {
+    // Initialize stats
+    memset(&_stats, 0, sizeof(_stats));
+
     loadCards();
+    loadStats();
+
+    // Check and update streak
+    updateStreak();
 }
 
 String SRSManager::addCard(const String& type, const String& front, const String& back) {
@@ -320,4 +327,131 @@ bool SRSManager::loadCards() {
     }
 
     return true;
+}
+
+SRSStats SRSManager::getStats() {
+    return _stats;
+}
+
+void SRSManager::recordReview(bool correct, bool isNew) {
+    _stats.todayReviews++;
+    if (isNew) _stats.todayNew++;
+    if (correct) _stats.todayCorrect++;
+
+    // Update today's weekly count
+    _stats.weeklyReviews[6] = _stats.todayReviews;
+
+    _stats.lastStudyDate = getCurrentTime();
+    saveStats();
+}
+
+int SRSManager::getMasteredCount(const String& type) {
+    int count = 0;
+    for (const auto& card : _cards) {
+        if (type.length() > 0 && card.type != type) continue;
+        // Consider mastered if interval >= 21 days
+        if (card.interval >= 21) count++;
+    }
+    return count;
+}
+
+int SRSManager::getDueCountForDay(int dayOffset, const String& type) {
+    unsigned long now = getCurrentTime();
+    unsigned long dayStart = now + (dayOffset * 86400UL);
+    unsigned long dayEnd = dayStart + 86400UL;
+
+    int count = 0;
+    for (const auto& card : _cards) {
+        if (type.length() > 0 && card.type != type) continue;
+        if (card.due > 0 && card.due >= dayStart && card.due < dayEnd) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void SRSManager::loadStats() {
+    if (!LittleFS.exists(STATS_FILE)) {
+        return;
+    }
+
+    File file = LittleFS.open(STATS_FILE, FILE_READ);
+    if (!file) return;
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+
+    if (error) return;
+
+    _stats.streak = doc["streak"] | 0;
+    _stats.todayReviews = doc["todayReviews"] | 0;
+    _stats.todayNew = doc["todayNew"] | 0;
+    _stats.todayCorrect = doc["todayCorrect"] | 0;
+    _stats.lastStudyDate = doc["lastStudyDate"] | 0UL;
+
+    JsonArray weekly = doc["weeklyReviews"].as<JsonArray>();
+    for (int i = 0; i < 7 && i < (int)weekly.size(); i++) {
+        _stats.weeklyReviews[i] = weekly[i] | 0;
+    }
+}
+
+void SRSManager::saveStats() {
+    if (!LittleFS.exists("/userdata")) {
+        LittleFS.mkdir("/userdata");
+    }
+
+    File file = LittleFS.open(STATS_FILE, FILE_WRITE);
+    if (!file) return;
+
+    JsonDocument doc;
+    doc["streak"] = _stats.streak;
+    doc["todayReviews"] = _stats.todayReviews;
+    doc["todayNew"] = _stats.todayNew;
+    doc["todayCorrect"] = _stats.todayCorrect;
+    doc["lastStudyDate"] = _stats.lastStudyDate;
+
+    JsonArray weekly = doc["weeklyReviews"].to<JsonArray>();
+    for (int i = 0; i < 7; i++) {
+        weekly.add(_stats.weeklyReviews[i]);
+    }
+
+    serializeJson(doc, file);
+    file.close();
+}
+
+void SRSManager::updateStreak() {
+    unsigned long now = getCurrentTime();
+    int today = getDayOfYear(now);
+    int lastDay = getDayOfYear(_stats.lastStudyDate);
+
+    // Check if it's a new day
+    if (today != lastDay) {
+        // Shift weekly reviews
+        for (int i = 0; i < 6; i++) {
+            _stats.weeklyReviews[i] = _stats.weeklyReviews[i + 1];
+        }
+        _stats.weeklyReviews[6] = 0;
+
+        // Reset today's counts
+        _stats.todayReviews = 0;
+        _stats.todayNew = 0;
+        _stats.todayCorrect = 0;
+
+        // Check streak
+        if (_stats.lastStudyDate > 0) {
+            unsigned long dayDiff = (now - _stats.lastStudyDate) / 86400UL;
+            if (dayDiff > 1) {
+                // Streak broken
+                _stats.streak = 0;
+            }
+        }
+
+        saveStats();
+    }
+}
+
+int SRSManager::getDayOfYear(unsigned long timestamp) {
+    // Simple day calculation from timestamp
+    return (int)(timestamp / 86400UL);
 }

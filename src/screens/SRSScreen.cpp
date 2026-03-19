@@ -54,7 +54,15 @@ void SRSScreen::nextCard() {
 void SRSScreen::processResponse(SRSResponse response) {
     if (!_currentCard) return;
 
-    SRSManager::instance().processResponse(_currentCard->id, response);
+    // Check if this was a new card (due == 0 before processing)
+    bool isNew = (_currentCard->due == 0);
+    bool isCorrect = (response == SRSResponse::GOOD || response == SRSResponse::EASY);
+
+    SRSManager& srs = SRSManager::instance();
+    srs.processResponse(_currentCard->id, response);
+
+    // Record stats
+    srs.recordReview(isCorrect, isNew);
 
     _reviewedCount++;
     _cardIndex++;

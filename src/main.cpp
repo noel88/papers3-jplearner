@@ -15,6 +15,7 @@
 #include "screens/SettingsScreen.h"
 #include "screens/PlaceholderScreen.h"
 #include "screens/SRSScreen.h"
+#include "screens/StatsScreen.h"
 #include "Config.h"
 #include "FontManager.h"
 #include "WebUI.h"
@@ -72,7 +73,7 @@ ReadScreen readScreen;
 SettingsScreen settingsScreen;
 SRSScreen wordScreen;
 SRSScreen grammarScreen;
-PlaceholderScreen statsScreen("Stats", "학습 통계", "Coming soon - 학습 진행 현황");
+StatsScreen statsScreen;
 
 // ============================================
 // State

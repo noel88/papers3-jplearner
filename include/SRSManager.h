@@ -32,6 +32,18 @@ enum class SRSResponse {
 };
 
 /**
+ * Learning statistics
+ */
+struct SRSStats {
+    int streak;              // Consecutive study days
+    int todayReviews;        // Reviews completed today
+    int todayNew;            // New cards studied today
+    int todayCorrect;        // Correct answers today
+    int weeklyReviews[7];    // Reviews per day (last 7 days)
+    unsigned long lastStudyDate;  // Last study date (Unix timestamp)
+};
+
+/**
  * SRSManager - Spaced Repetition System using SM-2 algorithm
  *
  * Features:
@@ -120,6 +132,29 @@ public:
      */
     unsigned long getCurrentTime();
 
+    /**
+     * Get learning statistics
+     */
+    SRSStats getStats();
+
+    /**
+     * Record a review (call after processResponse)
+     * @param correct Whether the response was correct (GOOD or EASY)
+     * @param isNew Whether this was a new card
+     */
+    void recordReview(bool correct, bool isNew);
+
+    /**
+     * Get mastered card count (interval >= 21 days)
+     */
+    int getMasteredCount(const String& type = "");
+
+    /**
+     * Get due count for specific day offset
+     * @param dayOffset 0=today, 1=tomorrow, etc.
+     */
+    int getDueCountForDay(int dayOffset, const String& type = "");
+
 private:
     SRSManager() = default;
     ~SRSManager() = default;
@@ -128,14 +163,22 @@ private:
 
     std::vector<SRSCard> _cards;
     int _nextId = 1;
+    SRSStats _stats;
+
+    // Stats helpers
+    void loadStats();
+    void saveStats();
+    void updateStreak();
+    int getDayOfYear(unsigned long timestamp);
 
     // SM-2 algorithm helpers
     float calculateNewEF(float oldEF, SRSResponse response);
     int calculateNewInterval(const SRSCard& card, SRSResponse response);
     unsigned long calculateDueTime(int intervalDays);
 
-    // Storage path
+    // Storage paths
     static constexpr const char* CARDS_FILE = "/userdata/cards.json";
+    static constexpr const char* STATS_FILE = "/userdata/stats.json";
 
     // SM-2 constants
     static constexpr float MIN_EF = 1.3f;

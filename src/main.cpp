@@ -582,22 +582,16 @@ void stopWiFiMode() {
 // ============================================
 // Display Refresh
 // ============================================
-int refreshCount = 0;
-const int FULL_CLEAR_INTERVAL = 3;  // More frequent full clear to reduce ghosting
+unsigned long lastFullClearTime = 0;
+const unsigned long FULL_CLEAR_INTERVAL_MS = 30000;  // 30 seconds between full clears
+bool forceFullClear = true;  // Force on first refresh
 
 void refreshDisplay() {
     if (needsFullRedraw || ScreenManager::instance().needsRedraw()) {
-        refreshCount++;
+        unsigned long now = millis();
 
-        // Force full clear on first refresh to remove old ghosting
-        static bool firstRefresh = true;
-        if (firstRefresh) {
-            refreshCount = FULL_CLEAR_INTERVAL;
-            firstRefresh = false;
-        }
-
-        // Full clear cycle only periodically (reduces ghosting)
-        if (refreshCount >= FULL_CLEAR_INTERVAL) {
+        // Full clear only after enough time has passed (reduces flicker)
+        if (forceFullClear || (now - lastFullClearTime >= FULL_CLEAR_INTERVAL_MS)) {
             // Use quality mode for full clear
             M5.Display.setEpdMode(epd_mode_t::epd_quality);
             M5.Display.fillScreen(TFT_BLACK);
@@ -608,7 +602,8 @@ void refreshDisplay() {
             M5.Display.fillScreen(TFT_WHITE);
             M5.Display.display();
             M5.Display.waitDisplay();
-            refreshCount = 0;
+            lastFullClearTime = now;
+            forceFullClear = false;
         }
 
         // Use fast mode for normal updates (less flicker)
@@ -772,7 +767,7 @@ void loop() {
         // If we just woke up from sleep, trigger full redraw and skip this loop
         if (sleepMgr.justWokeUp()) {
             needsFullRedraw = true;
-            refreshCount = FULL_CLEAR_INTERVAL;
+            forceFullClear = true;
             sleepMgr.clearWakeFlag();
             // Force immediate redraw
             refreshDisplay();
@@ -818,7 +813,7 @@ void loop() {
                 sm.switchTo((TabIndex)tabTouched);
                 needsFullRedraw = true;
                 // Force full clear on tab switch to eliminate ghosting
-                refreshCount = FULL_CLEAR_INTERVAL;
+                forceFullClear = true;
             }
         }
     } else if (touch.isPressed()) {

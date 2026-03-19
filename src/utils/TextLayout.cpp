@@ -1,5 +1,6 @@
 #include "TextLayout.h"
 #include "FontManager.h"
+#include "Config.h"
 
 TextLayout::TextLayout()
     : _hasSelection(false) {
@@ -184,6 +185,111 @@ bool TextLayout::isWordChar(uint8_t c) {
 
 void TextLayout::setSelection(const WordInfo& word) {
     _selection = word;
+    _hasSelection = true;
+}
+
+void TextLayout::setRangeSelection(const WordInfo& start, const WordInfo& end) {
+    // Determine which word comes first (by Y then X position)
+    const WordInfo* first = &start;
+    const WordInfo* last = &end;
+
+    if (end.y < start.y || (end.y == start.y && end.x < start.x)) {
+        first = &end;
+        last = &start;
+    }
+
+    // Build combined text from first to last word
+    String combinedText;
+    bool inRange = false;
+    bool foundEnd = false;
+
+    for (const auto& line : _lines) {
+        if (foundEnd) break;
+
+        int lineY = line.y;
+
+        // Check if this line is in the selection range
+        bool lineInRange = (lineY > first->y && lineY < last->y) ||
+                          (lineY == first->y && lineY == last->y) ||
+                          (lineY == first->y && first->y != last->y) ||
+                          (lineY == last->y && first->y != last->y);
+
+        if (!lineInRange) continue;
+
+        // For lines in range, extract relevant portion
+        if (lineY == first->y && lineY == last->y) {
+            // Same line - extract from first.x to last.x + last.width
+            int startByte = 0;
+            int endByte = line.text.length();
+
+            // Find start byte position
+            int charX = line.x;
+            int bytePos = 0;
+            while (bytePos < (int)line.text.length()) {
+                if (charX >= first->x) {
+                    startByte = bytePos;
+                    break;
+                }
+                int charLen = 1;
+                uint8_t c = line.text[bytePos];
+                if (c >= 0xF0) charLen = 4;
+                else if (c >= 0xE0) charLen = 3;
+                else if (c >= 0xC0) charLen = 2;
+
+                String sub = line.text.substring(0, bytePos + charLen);
+                charX = line.x + M5.Display.textWidth(sub.c_str());
+                bytePos += charLen;
+            }
+
+            // Find end byte position
+            charX = line.x;
+            bytePos = 0;
+            while (bytePos < (int)line.text.length()) {
+                if (charX >= last->x + last->width) {
+                    endByte = bytePos;
+                    break;
+                }
+                int charLen = 1;
+                uint8_t c = line.text[bytePos];
+                if (c >= 0xF0) charLen = 4;
+                else if (c >= 0xE0) charLen = 3;
+                else if (c >= 0xC0) charLen = 2;
+                bytePos += charLen;
+
+                String sub = line.text.substring(0, bytePos);
+                charX = line.x + M5.Display.textWidth(sub.c_str());
+            }
+
+            combinedText = line.text.substring(startByte, endByte);
+            foundEnd = true;
+        } else if (lineY == first->y) {
+            // First line of multi-line selection
+            inRange = true;
+            combinedText = line.text;  // Simplified: take whole line
+        } else if (lineY == last->y) {
+            // Last line of multi-line selection
+            if (combinedText.length() > 0) combinedText += " ";
+            combinedText += line.text;  // Simplified: take whole line
+            foundEnd = true;
+        } else if (inRange) {
+            // Middle line
+            if (combinedText.length() > 0) combinedText += " ";
+            combinedText += line.text;
+        }
+    }
+
+    // Create selection spanning from first to last
+    _selection.x = first->x;
+    _selection.y = first->y;
+    _selection.width = (first->y == last->y) ?
+        (last->x + last->width - first->x) :
+        (SCREEN_WIDTH - PAD_X - first->x);  // To end of first line
+    _selection.height = last->y + last->height - first->y;
+    _selection.text = combinedText.length() > 0 ? combinedText : first->text;
+    _selection.paraIndex = first->paraIndex;
+    _selection.byteStart = first->byteStart;
+    _selection.byteEnd = last->byteEnd;
+
     _hasSelection = true;
 }
 

@@ -49,6 +49,7 @@ public:
 
     // Selection management
     void setSelection(const WordInfo& word);
+    void setRangeSelection(const WordInfo& start, const WordInfo& end);
     void clearSelection();
     bool hasSelection() const { return _hasSelection; }
 

@@ -23,7 +23,8 @@ CopyScreen::CopyScreen()
       _touchStartX(0),
       _touchStartY(0),
       _touchStartTime(0),
-      _touchInContentArea(false) {
+      _touchInContentArea(false),
+      _inDragSelection(false) {
 }
 
 void CopyScreen::onEnter() {
@@ -710,17 +711,10 @@ bool CopyScreen::handleTouchStart(int x, int y) {
     // Handle popup menu touch first
     if (_popupMenu.isVisible()) {
         PopupMenu::Action action = _popupMenu.handleTouch(x, y);
-        if (action != PopupMenu::NONE) {
-            handlePopupAction(action);
-            return true;
-        }
-        // Touch outside popup - dismiss it
-        _textLayout.clearSelection();
-        _popupMenu.hide();
-        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
-        M5.Display.startWrite();
-        drawPageContent();
-        M5.Display.endWrite();
+        // Any touch while popup is visible dismisses or acts on it
+        handlePopupAction(action);
+        // Reset touch state to prevent further processing
+        _touchInContentArea = false;
         return true;
     }
 
@@ -792,25 +786,85 @@ bool CopyScreen::handleTouchStart(int x, int y) {
 }
 
 bool CopyScreen::handleTouchMove(int x, int y) {
-    // If user moves finger too much, cancel long press detection
-    if (_touchInContentArea) {
-        int dx = abs(x - _touchStartX);
-        int dy = abs(y - _touchStartY);
-        if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
-            _touchInContentArea = false;  // Cancel long press
-        }
+    if (!_touchInContentArea) {
+        return false;
     }
+
+    unsigned long pressDuration = millis() - _touchStartTime;
+    int dx = abs(x - _touchStartX);
+    int dy = abs(y - _touchStartY);
+
+    // Check if long press threshold reached and user is dragging
+    if (pressDuration >= LONG_PRESS_MS) {
+        // Start drag selection if not already
+        if (!_inDragSelection) {
+            // Select first word at start position
+            WordInfo startWord;
+            if (_textLayout.findWordAt(_touchStartX, _touchStartY, startWord)) {
+                _dragStartWord = startWord;
+                _textLayout.setSelection(startWord);
+                _inDragSelection = true;
+
+                // Draw initial highlight
+                M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+                M5.Display.startWrite();
+                drawPageContent();
+                M5.Display.endWrite();
+            }
+        }
+
+        // Extend selection to current position
+        if (_inDragSelection && (dx > 5 || dy > 5)) {
+            WordInfo currentWord;
+            if (_textLayout.findWordAt(x, y, currentWord)) {
+                // Create extended selection from start to current
+                _textLayout.setRangeSelection(_dragStartWord, currentWord);
+
+                // Redraw with updated selection
+                M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+                M5.Display.startWrite();
+                drawPageContent();
+                M5.Display.endWrite();
+            }
+        }
+        // Return false - we handled our own display update
+        return false;
+    }
+
+    // Before long press threshold, check if moved too much
+    if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+        _touchInContentArea = false;  // Cancel long press
+    }
+
     return false;
 }
 
 bool CopyScreen::handleTouchEnd() {
+    // Finalize drag selection if active
+    if (_inDragSelection) {
+        _inDragSelection = false;
+
+        // Show popup with selected text
+        if (_textLayout.hasSelection()) {
+            int selX, selY, selW, selH;
+            _textLayout.getSelectionBounds(selX, selY, selW, selH);
+            _popupMenu.show(selX + selW / 2, selY, _textLayout.getSelectedText());
+
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            drawPageContent();
+            M5.Display.endWrite();
+        }
+        return true;
+    }
+
     if (!_touchInContentArea) {
         return false;
     }
 
     unsigned long pressDuration = millis() - _touchStartTime;
 
-    // Long press in content area - trigger word selection
+    // Long press without drag - single word selection
     if (pressDuration >= LONG_PRESS_MS) {
         handleWordSelection(_touchStartX, _touchStartY);
         return true;
@@ -864,6 +918,11 @@ void CopyScreen::handleWordSelection(int x, int y) {
 }
 
 void CopyScreen::handlePopupAction(PopupMenu::Action action) {
+    // Handle NONE case (touch inside popup but not on button)
+    if (action == PopupMenu::NONE) {
+        return;  // Do nothing, keep popup open
+    }
+
     String selectedText = _popupMenu.getSelectedText();
 
     switch (action) {
@@ -881,6 +940,7 @@ void CopyScreen::handlePopupAction(PopupMenu::Action action) {
 
         case PopupMenu::CANCEL:
         default:
+            // Just dismiss, no action needed
             break;
     }
 

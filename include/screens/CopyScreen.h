@@ -79,11 +79,13 @@ private:
     TextLayout _textLayout;
     PopupMenu _popupMenu;
 
-    // Touch tracking for long press detection
+    // Touch tracking for long press and drag selection
     int _touchStartX;
     int _touchStartY;
     unsigned long _touchStartTime;
     bool _touchInContentArea;
+    bool _inDragSelection;      // True when dragging to extend selection
+    WordInfo _dragStartWord;    // First word selected when drag started
     static constexpr unsigned long LONG_PRESS_MS = 400;  // 400ms for long press
     static constexpr int TOUCH_MOVE_THRESHOLD = 20;      // Max movement for long press
 

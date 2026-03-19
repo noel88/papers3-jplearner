@@ -596,12 +596,10 @@ void refreshDisplay() {
             firstRefresh = false;
         }
 
-        // Always use quality mode for main content
-        M5.Display.setEpdMode(epd_mode_t::epd_quality);
-
-        // Full clear cycle to remove vertical ghosting
+        // Full clear cycle only periodically (reduces ghosting)
         if (refreshCount >= FULL_CLEAR_INTERVAL) {
-            // Complete clear sequence: black → white → content
+            // Use quality mode for full clear
+            M5.Display.setEpdMode(epd_mode_t::epd_quality);
             M5.Display.fillScreen(TFT_BLACK);
             M5.Display.display();
             M5.Display.waitDisplay();
@@ -611,12 +609,10 @@ void refreshDisplay() {
             M5.Display.display();
             M5.Display.waitDisplay();
             refreshCount = 0;
-        } else {
-            // Normal clear
-            M5.Display.clearDisplay();
-            M5.Display.waitDisplay();
         }
 
+        // Use fast mode for normal updates (less flicker)
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
         M5.Display.fillScreen(TFT_WHITE);
         ScreenManager::instance().draw();
         drawTabBar();
@@ -625,12 +621,11 @@ void refreshDisplay() {
         needsFullRedraw = false;
         needsTabRedraw = false;
     } else if (needsTabRedraw) {
-        // Tab-only update can use faster mode
-        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        // Tab-only update - fastest mode
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         drawTabBar();
         M5.Display.display();
         M5.Display.waitDisplay();
-        M5.Display.setEpdMode(epd_mode_t::epd_quality);
         needsTabRedraw = false;
     }
 }
@@ -770,17 +765,19 @@ void loop() {
 
     SleepManager& sleepMgr = SleepManager::instance();
 
-    // Check if waking from sleep
-    if (sleepMgr.isSleeping()) {
-        // Just woke up - force full redraw
-        needsFullRedraw = true;
-        refreshCount = FULL_CLEAR_INTERVAL;
-        sleepMgr.resetActivity();
-    }
-
     // Check sleep timeout (only if not in WiFi mode)
     if (!wifiMode) {
         sleepMgr.update();
+
+        // If we just woke up from sleep, trigger full redraw and skip this loop
+        if (sleepMgr.justWokeUp()) {
+            needsFullRedraw = true;
+            refreshCount = FULL_CLEAR_INTERVAL;
+            sleepMgr.clearWakeFlag();
+            // Force immediate redraw
+            refreshDisplay();
+            return;
+        }
     }
 
     updateBattery();

@@ -6,8 +6,7 @@ void SleepManager::init() {
     _sleepMinutes = config.sleepMinutes;
     _lastActivity = millis();
     _sleeping = false;
-
-    Serial.printf("SleepManager: Initialized, timeout=%d minutes\n", _sleepMinutes);
+    _justWokeUp = false;
 }
 
 void SleepManager::resetActivity() {
@@ -31,9 +30,6 @@ void SleepManager::update() {
 void SleepManager::enterSleep() {
     if (_sleeping) return;
 
-    Serial.println("SleepManager: Entering sleep mode");
-    Serial.flush();
-
     _sleeping = true;
 
     // Draw sleep screen
@@ -46,15 +42,11 @@ void SleepManager::enterSleep() {
     // Put e-ink display to sleep (retains image, zero power)
     M5.Display.sleep();
 
-    // Configure touch wakeup
-    // M5Paper S3 uses GPIO for touch interrupt
-    esp_sleep_enable_ext0_wakeup(GPIO_NUM_21, 0);  // Touch INT pin, wake on LOW
+    // Configure touch wakeup (M5Paper S3 uses GPIO21 for touch interrupt)
+    esp_sleep_enable_ext0_wakeup(GPIO_NUM_21, 0);
 
-    // Enter light sleep (can wake immediately on touch)
-    Serial.println("SleepManager: Entering light sleep");
-    Serial.flush();
-    delay(100);
-
+    // Enter light sleep
+    delay(50);
     esp_light_sleep_start();
 
     // --- Execution resumes here after wakeup ---
@@ -64,15 +56,12 @@ void SleepManager::enterSleep() {
 void SleepManager::wakeUp() {
     if (!_sleeping) return;
 
-    Serial.println("SleepManager: Waking up");
-
     // Wake display
     M5.Display.wakeup();
 
     _sleeping = false;
+    _justWokeUp = true;
     _lastActivity = millis();
-
-    Serial.println("SleepManager: Awake, ready for redraw");
 }
 
 int SleepManager::getBatteryPercent() {

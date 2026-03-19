@@ -43,6 +43,16 @@ public:
     bool isSleeping() const { return _sleeping; }
 
     /**
+     * Check if we just woke up from sleep (for triggering redraw)
+     */
+    bool justWokeUp() const { return _justWokeUp; }
+
+    /**
+     * Clear the woke up flag after handling
+     */
+    void clearWakeFlag() { _justWokeUp = false; }
+
+    /**
      * Force immediate sleep
      */
     void enterSleep();
@@ -77,6 +87,7 @@ private:
 
     // State
     bool _sleeping = false;
+    bool _justWokeUp = false;
     unsigned long _lastActivity = 0;
     int _sleepMinutes = 5;  // Default 5 minutes
 };

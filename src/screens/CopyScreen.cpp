@@ -896,21 +896,74 @@ void CopyScreen::handlePopupAction(PopupMenu::Action action) {
 }
 
 void CopyScreen::saveToVocabulary(const String& word) {
+    // Ensure directory exists
+    if (!LittleFS.exists("/userdata")) {
+        LittleFS.mkdir("/userdata");
+    }
+
     // Save word to vocabulary file in LittleFS
     File file = LittleFS.open("/userdata/vocabulary.txt", FILE_APPEND);
     if (file) {
         file.println(word);
         file.close();
+        showToast("단어 저장됨");
+    } else {
+        showToast("저장 실패");
     }
 }
 
 void CopyScreen::saveToGrammar(const String& text) {
+    // Ensure directory exists
+    if (!LittleFS.exists("/userdata")) {
+        LittleFS.mkdir("/userdata");
+    }
+
     // Save text to grammar patterns file in LittleFS
     File file = LittleFS.open("/userdata/grammar.txt", FILE_APPEND);
     if (file) {
         file.println(text);
         file.close();
+        showToast("문형 저장됨");
+    } else {
+        showToast("저장 실패");
     }
+}
+
+void CopyScreen::showToast(const char* message) {
+    // Draw toast message at center of screen
+    int toastW = 200;
+    int toastH = 50;
+    int toastX = (SCREEN_WIDTH - toastW) / 2;
+    int toastY = (SCREEN_HEIGHT - TAB_BAR_HEIGHT) / 2 - toastH / 2;
+
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+    M5.Display.startWrite();
+
+    // Draw toast background with border
+    M5.Display.fillRect(toastX, toastY, toastW, toastH, TFT_WHITE);
+    M5.Display.drawRect(toastX, toastY, toastW, toastH, TFT_BLACK);
+    M5.Display.drawRect(toastX + 1, toastY + 1, toastW - 2, toastH - 2, TFT_BLACK);
+
+    // Draw message centered
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(1.0);
+    M5.Display.setTextColor(TFT_BLACK);
+
+    int textW = M5.Display.textWidth(message);
+    int textX = toastX + (toastW - textW) / 2;
+    int textY = toastY + (toastH - 24) / 2;
+    M5.Display.setCursor(textX, textY);
+    M5.Display.print(message);
+
+    M5.Display.endWrite();
+
+    // Brief delay to show the toast
+    delay(800);
+
+    // Redraw page to remove toast
+    M5.Display.startWrite();
+    drawPageContent();
+    M5.Display.endWrite();
 }
 
 void CopyScreen::loadReadingProgress() {

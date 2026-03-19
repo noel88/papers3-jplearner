@@ -111,4 +111,7 @@ private:
     void handlePopupAction(PopupMenu::Action action);
     void saveToVocabulary(const String& word);
     void saveToGrammar(const String& text);
+
+    // UI feedback
+    void showToast(const char* message);
 };

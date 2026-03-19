@@ -311,6 +311,9 @@ bool TextLayout::getSelectionBounds(int& x, int& y, int& w, int& h) const {
 void TextLayout::drawHighlight() {
     if (!_hasSelection) return;
 
+    FontManager& fm = FontManager::instance();
+    bool useCustomFont = fm.hasCustomFont();
+
     int padding = 2;
     int selEndY = _selection.y + _selection.height;
 
@@ -327,6 +330,9 @@ void TextLayout::drawHighlight() {
             TFT_BLACK
         );
 
+        // Draw white text on black background (highlight)
+        // Note: LovyanGFX doesn't support white text rendering for custom fonts
+        // so we use built-in font for highlights
         M5.Display.setTextColor(TFT_WHITE);
         M5.Display.setFont(&fonts::efontJA_24);
         M5.Display.setTextSize(1.0);
@@ -372,6 +378,7 @@ void TextLayout::drawHighlight() {
 
         M5.Display.fillRect(hlX - padding, lineY - 2, hlW + padding * 2, line.height, TFT_BLACK);
 
+        // Draw white text on black background
         M5.Display.setTextColor(TFT_WHITE);
         M5.Display.setFont(&fonts::efontJA_24);
         M5.Display.setTextSize(1.0);

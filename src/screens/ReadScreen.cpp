@@ -18,7 +18,11 @@ ReadScreen::ReadScreen()
       _chapterListScroll(0),
       _currentChapter(0),
       _currentPage(0),
-      _totalPages(0) {
+      _totalPages(0),
+      _touchStartTime(0),
+      _touchStartX(0),
+      _touchStartY(0),
+      _touchInContentArea(false) {
 }
 
 void ReadScreen::onEnter() {
@@ -532,10 +536,13 @@ bool ReadScreen::handleReadingTouch(int x, int y) {
         }
     }
 
-    // Content area touch - text selection
+    // Content area touch - start tracking for long press
     if (y >= contentY && y < navY) {
-        handleWordSelection(x, y);
-        return true;
+        _touchStartX = x;
+        _touchStartY = y;
+        _touchStartTime = millis();
+        _touchInContentArea = true;
+        return false;  // Don't trigger redraw yet
     }
 
     // Navigation area
@@ -593,24 +600,12 @@ void ReadScreen::handleWordSelection(int x, int y) {
         _popupMenu.show(popupX, popupY, word.text);
 
         // Redraw to show highlight and popup
-        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         M5.Display.startWrite();
         drawReadingContent();
         M5.Display.endWrite();
 
         Serial.printf("Selected word: '%s'\n", word.text.c_str());
-    } else {
-        // Touch on empty area - clear selection
-        if (_textLayout.hasSelection() || _popupMenu.isVisible()) {
-            _textLayout.clearSelection();
-            _popupMenu.hide();
-
-            // Redraw to remove highlight
-            M5.Display.setEpdMode(epd_mode_t::epd_fast);
-            M5.Display.startWrite();
-            drawReadingContent();
-            M5.Display.endWrite();
-        }
     }
 }
 
@@ -675,6 +670,33 @@ bool ReadScreen::handleTouchStart(int x, int y) {
             return handleChapterListTouch(x, y);
         case Mode::Reading:
             return handleReadingTouch(x, y);
+    }
+    return false;
+}
+
+bool ReadScreen::handleTouchEnd() {
+    // Only handle touch end in Reading mode for word selection
+    if (_mode == Mode::Reading && _touchInContentArea) {
+        _touchInContentArea = false;
+
+        unsigned long pressDuration = millis() - _touchStartTime;
+
+        // Long press - word selection
+        if (pressDuration >= LONG_PRESS_MS) {
+            handleWordSelection(_touchStartX, _touchStartY);
+            return true;
+        }
+
+        // Short tap - clear selection if any
+        if (_textLayout.hasSelection() || _popupMenu.isVisible()) {
+            _textLayout.clearSelection();
+            _popupMenu.hide();
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            drawReadingContent();
+            M5.Display.endWrite();
+            return true;
+        }
     }
     return false;
 }

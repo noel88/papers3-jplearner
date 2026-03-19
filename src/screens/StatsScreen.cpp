@@ -4,6 +4,7 @@
 // Layout constants
 static constexpr int CARD_PAD = 15;
 static constexpr int CARD_RADIUS = 8;
+static constexpr int HEADER_HEIGHT = 50;
 
 StatsScreen::StatsScreen()
     : BaseScreen(),

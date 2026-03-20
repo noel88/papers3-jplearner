@@ -75,9 +75,8 @@ PopupMenu::Action PopupMenu::handleTouch(int x, int y) {
 
         if (x >= bx && x < bx + bw && y >= by && y < by + bh) {
             switch (i) {
-                case 0: return SEARCH;
-                case 1: return SAVE;
-                case 2: return GRAMMAR;
+                case 0: return SAVE;
+                case 1: return GRAMMAR;
             }
         }
     }
@@ -94,9 +93,8 @@ void PopupMenu::getButtonBounds(int index, int& x, int& y, int& w, int& h) const
 
 const char* PopupMenu::getButtonLabel(int index) const {
     switch (index) {
-        case 0: return "검색";
-        case 1: return "저장";
-        case 2: return "문형";
+        case 0: return "저장";
+        case 1: return "문형";
         default: return "";
     }
 }

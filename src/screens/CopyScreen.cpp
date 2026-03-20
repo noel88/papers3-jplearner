@@ -19,7 +19,12 @@ CopyScreen::CopyScreen()
       _totalPages(0),
       _chapterOffset(-1),
       _readingMode(ReadingMode::DAILY),
-      _currentChapter(0) {
+      _currentChapter(0),
+      _touchStartX(0),
+      _touchStartY(0),
+      _touchStartTime(0),
+      _touchInContentArea(false),
+      _inDragSelection(false) {
 }
 
 void CopyScreen::onEnter() {
@@ -31,6 +36,16 @@ void CopyScreen::onEnter() {
         fm.setPrimaryFont(config.primaryFont);
         fm.setFontSize(config.fontSizePt);
     }
+
+    // Configure content renderer
+    ContentRenderer::Config renderConfig;
+    renderConfig.headerHeight = HEADER_HEIGHT;
+    renderConfig.navHeight = NAV_HEIGHT;
+    renderConfig.tabBarHeight = TAB_BAR_HEIGHT;
+    renderConfig.lineSpacing = LINE_SPACING;
+    renderConfig.paragraphSpacing = PARAGRAPH_SPACING;
+    renderConfig.fontSizePt = config.fontSizePt;
+    _contentRenderer.setConfig(renderConfig);
 
     // Reload content when entering screen
     loadTodayContent();
@@ -414,52 +429,7 @@ bool CopyScreen::loadFromTextFile(int dayOfYear) {
 }
 
 void CopyScreen::calculatePages() {
-    _pageBreaks.clear();
-    _pageBreaks.push_back(0);  // First page starts at paragraph 0
-
-    if (_paragraphs.empty()) {
-        _totalPages = 0;
-        return;
-    }
-
-    FontManager& fm = FontManager::instance();
-    int fontH;
-
-    if (fm.hasCustomFont()) {
-        fontH = config.fontSizePt + 4;  // Custom font height
-    } else {
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        fontH = M5.Display.fontHeight();
-    }
-
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;  // Area above tab bar
-    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - PAD_Y * 3;  // Extra padding
-
-    int currentHeight = 0;
-    int paraIndex = 0;
-
-    while (paraIndex < _paragraphs.size()) {
-        const String& para = _paragraphs[paraIndex];
-
-        // Calculate wrapped height for this paragraph
-        int paraWidth = M5.Display.textWidth(para.c_str());
-        int lines = (paraWidth / contentW) + 1;
-        int paraHeight = lines * (fontH + LINE_SPACING) + PARAGRAPH_SPACING;
-
-        if (currentHeight + paraHeight > contentH && currentHeight > 0) {
-            // Start a new page
-            _pageBreaks.push_back(paraIndex);
-            currentHeight = paraHeight;
-        } else {
-            currentHeight += paraHeight;
-        }
-
-        paraIndex++;
-    }
-
-    _totalPages = _pageBreaks.size();
+    _totalPages = _contentRenderer.calculatePages(_paragraphs, _pageBreaks);
 }
 
 void CopyScreen::drawHeader() {
@@ -513,100 +483,11 @@ void CopyScreen::drawHeader() {
 }
 
 void CopyScreen::drawPageContent() {
-    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
-    int contentY = HEADER_HEIGHT + PAD_Y;
-    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT;
-
-    // Clear content area
-    M5.Display.fillRect(0, HEADER_HEIGHT, SCREEN_WIDTH, contentH, TFT_WHITE);
-
-    // Clear text layout for new page
-    _textLayout.clear();
-
-    if (_currentPage >= _totalPages || _pageBreaks.empty()) {
-        return;
-    }
-
-    FontManager& fm = FontManager::instance();
-    bool useCustomFont = fm.hasCustomFont();
-
-    int fontH;
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-
-    if (useCustomFont) {
-        fm.setFontSize(config.fontSizePt);
-        fontH = config.fontSizePt + 4;  // Approximate height
-    } else {
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        fontH = M5.Display.fontHeight();
-    }
-    M5.Display.setTextColor(TFT_BLACK);
-
-    int maxY = availableHeight - NAV_HEIGHT - PAD_Y * 2;  // Extra padding above nav buttons
-
-    int startPara = _pageBreaks[_currentPage];
-    int endPara = (_currentPage + 1 < _totalPages) ? _pageBreaks[_currentPage + 1] : _paragraphs.size();
-
-    int y = contentY;
-
-    for (int i = startPara; i < endPara && y < maxY; i++) {
-        const String& para = _paragraphs[i];
-
-        // Draw wrapped text
-        int bytePos = 0;
-        int byteLen = para.length();
-
-        while (bytePos < byteLen && y < maxY) {
-            int lineEnd = bytePos;
-
-            // Find line break point
-            while (lineEnd < byteLen) {
-                int charLen = 1;
-                uint8_t c = para[lineEnd];
-                if (c >= 0xF0) charLen = 4;
-                else if (c >= 0xE0) charLen = 3;
-                else if (c >= 0xC0) charLen = 2;
-
-                String sub = para.substring(bytePos, lineEnd + charLen);
-                int textW = useCustomFont ? fm.getTextWidth(sub) : M5.Display.textWidth(sub.c_str());
-                if (textW > contentW) break;
-
-                lineEnd += charLen;
-            }
-
-            if (lineEnd == bytePos) lineEnd += 1;
-
-            String lineText = para.substring(bytePos, lineEnd);
-            int lineWidth = useCustomFont ? fm.getTextWidth(lineText) : M5.Display.textWidth(lineText.c_str());
-
-            // Record line position for text selection
-            _textLayout.addLine(i, bytePos, lineEnd, PAD_X, y, lineWidth, fontH + LINE_SPACING, lineText);
-
-            // Draw highlight if this line contains selection
-            if (_textLayout.hasSelection()) {
-                _textLayout.drawHighlight();
-            }
-
-            // Draw this line
-            if (useCustomFont) {
-                fm.drawString(lineText, PAD_X, y);
-            } else {
-                M5.Display.setCursor(PAD_X, y);
-                M5.Display.print(lineText);
-            }
-
-            bytePos = lineEnd;
-            y += fontH + LINE_SPACING;
-        }
-
-        y += PARAGRAPH_SPACING - LINE_SPACING;  // Extra space between paragraphs
-    }
-
-    // Draw popup menu if visible
-    if (_popupMenu.isVisible()) {
-        _popupMenu.draw();
-    }
+    _contentRenderer.renderPage(
+        _paragraphs, _pageBreaks,
+        _currentPage, _totalPages,
+        _textLayout, _popupMenu
+    );
 }
 
 void CopyScreen::drawNavigation() {
@@ -622,7 +503,8 @@ void CopyScreen::drawNavigation() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(UI::SIZE_CONTENT);
 
-    int buttonY = navY + (NAV_HEIGHT - 30) / 2;
+    int fontH = M5.Display.fontHeight();
+    int buttonY = navY + (NAV_HEIGHT - fontH) / 2;
     int buttonW = 120;
 
     // Previous button (left, bold)
@@ -703,22 +585,37 @@ bool CopyScreen::handleTouchStart(int x, int y) {
     int navY = availableHeight - NAV_HEIGHT;
     int contentY = HEADER_HEIGHT;
 
-    // Handle popup menu touch first
-    if (_popupMenu.isVisible()) {
-        PopupMenu::Action action = _popupMenu.handleTouch(x, y);
-        if (action != PopupMenu::NONE) {
-            handlePopupAction(action);
-            return true;
-        }
-    }
+    // Handle dictionary popup touch - any touch dismisses it
+    if (_selectionHelper.isDictionaryVisible()) {
+        _selectionHelper.closeDictionary();
+        _textLayout.clearSelection();
+        _popupMenu.hide();
 
-    // Content area touch - text selection
-    if (y >= contentY && y < navY) {
-        handleWordSelection(x, y);
+        // Redraw page
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
+        drawPageContent();
+        M5.Display.endWrite();
         return true;
     }
 
-    // Navigation area touch
+    // Handle popup menu touch first
+    if (_popupMenu.isVisible()) {
+        PopupMenu::Action action = _popupMenu.handleTouch(x, y);
+        // Any touch while popup is visible dismisses or acts on it
+        handlePopupAction(action);
+        // Reset touch state to prevent further processing
+        _touchInContentArea = false;
+        return true;
+    }
+
+    // Record touch start for long press detection
+    _touchStartX = x;
+    _touchStartY = y;
+    _touchStartTime = millis();
+    _touchInContentArea = (y >= contentY && y < navY);
+
+    // Navigation area touch - handle immediately
     if (y >= navY && y < availableHeight) {
         // Clear any selection when navigating
         if (_textLayout.hasSelection()) {
@@ -775,6 +672,107 @@ bool CopyScreen::handleTouchStart(int x, int y) {
         }
     }
 
+    // Content area touch - don't select immediately, wait for long press
+    return false;
+}
+
+bool CopyScreen::handleTouchMove(int x, int y) {
+    if (!_touchInContentArea) {
+        return false;
+    }
+
+    unsigned long pressDuration = millis() - _touchStartTime;
+    int dx = abs(x - _touchStartX);
+    int dy = abs(y - _touchStartY);
+
+    // Before long press threshold
+    if (pressDuration < LONG_PRESS_MS) {
+        // If moved too much, cancel long press
+        if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+            _touchInContentArea = false;
+        }
+        return false;
+    }
+
+    // Long press threshold reached
+    // First, select word at start position if not done yet
+    if (!_inDragSelection) {
+        WordInfo startWord;
+        if (_textLayout.findWordAt(_touchStartX, _touchStartY, startWord)) {
+            _dragStartWord = startWord;
+            _textLayout.setSelection(startWord);
+            _inDragSelection = true;
+
+            // Draw initial highlight - partial update only
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            _textLayout.drawHighlight();
+            M5.Display.endWrite();
+        }
+        return false;
+    }
+
+    // Already in drag mode - extend selection if moved enough
+    if (dx > 10 || dy > 10) {
+        WordInfo currentWord;
+        if (_textLayout.findWordAt(x, y, currentWord)) {
+            // Update selection
+            _textLayout.setRangeSelection(_dragStartWord, currentWord);
+
+            // Must redraw full content to clear old highlight
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            drawPageContent();
+            M5.Display.endWrite();
+        }
+    }
+
+    return false;
+}
+
+bool CopyScreen::handleTouchEnd() {
+    // Finalize drag selection if active
+    if (_inDragSelection) {
+        _inDragSelection = false;
+
+        // Show popup with selected text
+        if (_textLayout.hasSelection()) {
+            int selX, selY, selW, selH;
+            _textLayout.getSelectionBounds(selX, selY, selW, selH);
+            _popupMenu.show(selX + selW / 2, selY, _textLayout.getSelectedText());
+
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            _textLayout.drawHighlight();
+            _popupMenu.draw();
+            M5.Display.endWrite();
+        }
+        return true;
+    }
+
+    if (!_touchInContentArea) {
+        return false;
+    }
+
+    unsigned long pressDuration = millis() - _touchStartTime;
+
+    // Long press without drag - single word selection
+    if (pressDuration >= LONG_PRESS_MS) {
+        handleWordSelection(_touchStartX, _touchStartY);
+        return true;
+    }
+
+    // Short tap in content area - clear selection if any
+    if (_textLayout.hasSelection()) {
+        _textLayout.clearSelection();
+        _popupMenu.hide();
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+        M5.Display.startWrite();
+        drawPageContent();
+        M5.Display.endWrite();
+        return true;
+    }
+
     return false;
 }
 
@@ -790,10 +788,11 @@ void CopyScreen::handleWordSelection(int x, int y) {
         int popupY = word.y;
         _popupMenu.show(popupX, popupY, word.text);
 
-        // Redraw to show highlight and popup
-        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        // Use fastest mode for minimal flicker
+        // Redraw full content to ensure highlight shows correctly on e-ink
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         M5.Display.startWrite();
-        drawPageContent();
+        drawPageContent();  // This includes highlight and popup
         M5.Display.endWrite();
     } else {
         // Touch on empty area - clear selection
@@ -801,8 +800,8 @@ void CopyScreen::handleWordSelection(int x, int y) {
             _textLayout.clearSelection();
             _popupMenu.hide();
 
-            // Redraw to remove highlight
-            M5.Display.setEpdMode(epd_mode_t::epd_fast);
+            // Redraw content to remove highlight - need full redraw here
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
             M5.Display.startWrite();
             drawPageContent();
             M5.Display.endWrite();
@@ -811,53 +810,32 @@ void CopyScreen::handleWordSelection(int x, int y) {
 }
 
 void CopyScreen::handlePopupAction(PopupMenu::Action action) {
-    String selectedText = _popupMenu.getSelectedText();
-
-    switch (action) {
-        case PopupMenu::SEARCH:
-            // TODO: Phase 4 - Dictionary search
-            break;
-
-        case PopupMenu::SAVE:
-            saveToVocabulary(selectedText);
-            break;
-
-        case PopupMenu::GRAMMAR:
-            saveToGrammar(selectedText);
-            break;
-
-        case PopupMenu::CANCEL:
-        default:
-            break;
+    // Handle NONE case (touch inside popup but not on button)
+    if (action == PopupMenu::NONE) {
+        return;  // Do nothing, keep popup open
     }
 
-    // Clear selection and hide popup
+    String selectedText = _popupMenu.getSelectedText();
+
+    // Clear selection and hide popup first
     _textLayout.clearSelection();
     _popupMenu.hide();
 
-    // Redraw
-    M5.Display.setEpdMode(epd_mode_t::epd_fast);
-    M5.Display.startWrite();
-    drawPageContent();
-    M5.Display.endWrite();
-}
+    // Redraw callback for after toast disappears
+    auto redrawCallback = [this]() {
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
+        drawHeader();
+        drawPageContent();
+        drawNavigation();
+        M5.Display.endWrite();
+    };
 
-void CopyScreen::saveToVocabulary(const String& word) {
-    // Save word to vocabulary file in LittleFS
-    File file = LittleFS.open("/userdata/vocabulary.txt", FILE_APPEND);
-    if (file) {
-        file.println(word);
-        file.close();
-    }
-}
+    // Draw clean screen before showing toast
+    redrawCallback();
 
-void CopyScreen::saveToGrammar(const String& text) {
-    // Save text to grammar patterns file in LittleFS
-    File file = LittleFS.open("/userdata/grammar.txt", FILE_APPEND);
-    if (file) {
-        file.println(text);
-        file.close();
-    }
+    // Handle the action (shows toast, waits, then calls redrawCallback again)
+    _selectionHelper.handleAction(action, selectedText, redrawCallback);
 }
 
 void CopyScreen::loadReadingProgress() {
@@ -912,3 +890,4 @@ void CopyScreen::saveReadingProgress() {
         file.close();
     }
 }
+

@@ -50,11 +50,18 @@ public:
     uint16_t getFontSize() const { return _fontSize; }
 
     // Draw text using TTF font (returns width drawn)
-    // Falls back to secondary font if primary doesn't have glyph
+    // Falls back to built-in font if primary doesn't have glyph
     int drawString(const String& text, int x, int y);
+
+    // Draw text with specified color (for highlights)
+    int drawStringWithColor(const String& text, int x, int y, uint16_t color);
 
     // Get text width
     int getTextWidth(const String& text);
+
+    // Enable/disable Korean fallback to built-in efontKR
+    void setKoreanFallback(bool enable) { _koreanFallback = enable; }
+    bool hasKoreanFallback() const { return _koreanFallback; }
 
     // Check if using custom TTF font
     bool hasCustomFont() const { return _primaryFontName.length() > 0 && _fontLoaded; }
@@ -84,6 +91,7 @@ private:
     uint8_t* _fontData = nullptr;  // Font data in PSRAM
     size_t _fontDataSize = 0;      // Font file size
     int _lastError = 0;            // Last error code for debugging
+    bool _koreanFallback = true;   // Use built-in font for Korean characters
 
 public:
     int getLastError() const { return _lastError; }

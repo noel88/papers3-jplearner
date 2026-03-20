@@ -42,3 +42,7 @@ config.local.h
 
 # Data files (fonts, content - manage separately)
 data/
+
+# Dictionary data (large files - copy to SD card manually)
+dict_data/
+dict_output/

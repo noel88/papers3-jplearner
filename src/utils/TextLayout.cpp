@@ -1,5 +1,6 @@
 #include "TextLayout.h"
 #include "FontManager.h"
+#include "Config.h"
 
 TextLayout::TextLayout()
     : _hasSelection(false) {
@@ -7,22 +8,14 @@ TextLayout::TextLayout()
 
 void TextLayout::clear() {
     _lines.clear();
-    _hasSelection = false;
+    // Don't clear selection here - it should persist across redraws
+    // Use clearSelection() explicitly when needed
 }
 
 void TextLayout::addLine(int paraIndex, int byteStart, int byteEnd,
                          int x, int y, int width, int height,
                          const String& text) {
-    LineInfo line;
-    line.paraIndex = paraIndex;
-    line.byteStart = byteStart;
-    line.byteEnd = byteEnd;
-    line.x = x;
-    line.y = y;
-    line.width = width;
-    line.height = height;
-    line.text = text;
-    _lines.push_back(line);
+    _lines.emplace_back(LineInfo{paraIndex, byteStart, byteEnd, x, y, width, height, text});
 }
 
 bool TextLayout::findWordAt(int touchX, int touchY, WordInfo& wordInfo) {
@@ -186,6 +179,131 @@ void TextLayout::setSelection(const WordInfo& word) {
     _hasSelection = true;
 }
 
+void TextLayout::setRangeSelection(const WordInfo& start, const WordInfo& end) {
+    // Determine which word comes first (by Y then X position)
+    const WordInfo* first = &start;
+    const WordInfo* last = &end;
+
+    if (end.y < start.y || (end.y == start.y && end.x < start.x)) {
+        first = &end;
+        last = &start;
+    }
+
+    // If same word, just use single selection
+    if (first->x == last->x && first->y == last->y) {
+        setSelection(start);
+        return;
+    }
+
+    // Simple approach: find all text between the two positions
+    String combinedText;
+
+    for (const auto& line : _lines) {
+        int lineY = line.y;
+        int lineEndY = line.y + line.height;
+
+        // Skip lines before selection
+        if (lineEndY <= first->y) continue;
+        // Stop after last line
+        if (lineY > last->y + last->height) break;
+
+        // This line is in selection range
+        if (combinedText.length() > 0) combinedText += "";
+
+        // Same line as start and end
+        if (lineY == first->y && lineY == last->y) {
+            // Extract text between first.x and last.x + last.width
+            combinedText += extractTextInRange(line, first->x, last->x + last->width);
+        }
+        // First line of selection
+        else if (lineY == first->y) {
+            combinedText += extractTextInRange(line, first->x, line.x + line.width);
+        }
+        // Last line of selection
+        else if (lineY == last->y) {
+            combinedText += extractTextInRange(line, line.x, last->x + last->width);
+        }
+        // Middle lines - take whole line
+        else if (lineY > first->y && lineY < last->y) {
+            combinedText += line.text;
+        }
+    }
+
+    // Create selection bounds
+    _selection.x = first->x;
+    _selection.y = first->y;
+
+    if (first->y == last->y) {
+        // Same line
+        _selection.width = last->x + last->width - first->x;
+        _selection.height = first->height;
+    } else {
+        // Multiple lines
+        _selection.width = SCREEN_WIDTH - PAD_X - first->x;
+        _selection.height = last->y + last->height - first->y;
+    }
+
+    _selection.text = combinedText.length() > 0 ? combinedText : first->text;
+    _selection.paraIndex = first->paraIndex;
+    _selection.byteStart = first->byteStart;
+    _selection.byteEnd = last->byteEnd;
+
+    _hasSelection = true;
+}
+
+String TextLayout::extractTextInRange(const LineInfo& line, int startX, int endX) {
+    // Extract text from line between startX and endX
+    String result;
+    int bytePos = 0;
+    int startByte = -1;
+    int endByte = line.text.length();
+
+    // Calculate cumulative width to find characters in range
+    FontManager& fm = FontManager::instance();
+    bool useCustomFont = fm.hasCustomFont();
+
+    while (bytePos < (int)line.text.length()) {
+        // Get character length
+        int charLen = 1;
+        uint8_t c = line.text[bytePos];
+        if (c >= 0xF0) charLen = 4;
+        else if (c >= 0xE0) charLen = 3;
+        else if (c >= 0xC0) charLen = 2;
+
+        // Calculate cumulative position up to this character
+        String upToHere = line.text.substring(0, bytePos);
+        String upToNext = line.text.substring(0, bytePos + charLen);
+
+        int currentX = line.x;
+        int nextX = line.x;
+
+        if (useCustomFont) {
+            currentX += fm.getTextWidth(upToHere);
+            nextX += fm.getTextWidth(upToNext);
+        } else {
+            currentX += M5.Display.textWidth(upToHere.c_str());
+            nextX += M5.Display.textWidth(upToNext.c_str());
+        }
+
+        // Check if this character is in range
+        if (startByte < 0 && nextX > startX) {
+            startByte = bytePos;
+        }
+        if (currentX >= endX) {
+            endByte = bytePos;
+            break;
+        }
+
+        bytePos += charLen;
+    }
+
+    if (startByte >= 0 && startByte < endByte) {
+        result = line.text.substring(startByte, endByte);
+    }
+
+    return result;
+}
+
 void TextLayout::clearSelection() {
     _hasSelection = false;
 }
@@ -208,14 +326,90 @@ bool TextLayout::getSelectionBounds(int& x, int& y, int& w, int& h) const {
 void TextLayout::drawHighlight() {
     if (!_hasSelection) return;
 
-    // Draw gray background behind selected text
-    M5.Display.fillRect(
-        _selection.x - 2,
-        _selection.y - 2,
-        _selection.width + 4,
-        _selection.height + 4,
-        TFT_LIGHTGRAY
-    );
+    FontManager& fm = FontManager::instance();
+    bool useCustomFont = fm.hasCustomFont();
+
+    constexpr int padding = 2;
+    constexpr int typicalLineHeight = 40;  // Single line is ~32px
+    int selEndY = _selection.y + _selection.height;
+
+    // Check if single line selection (height matches typical line height)
+    bool isSingleLine = (_selection.height <= typicalLineHeight);
+
+    if (isSingleLine) {
+        // Simple single-word/single-line highlight
+        M5.Display.fillRect(
+            _selection.x - padding,
+            _selection.y - 2,
+            _selection.width + padding * 2,
+            _selection.height,
+            TFT_BLACK
+        );
+
+        // Draw white text on black background using configured font
+        if (useCustomFont) {
+            fm.drawStringWithColor(_selection.text, _selection.x, _selection.y, TFT_WHITE);
+        } else {
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setFont(&fonts::efontJA_24);
+            M5.Display.setTextSize(1.0);
+            M5.Display.setCursor(_selection.x, _selection.y);
+            M5.Display.print(_selection.text);
+            M5.Display.setTextColor(TFT_BLACK);
+        }
+        return;
+    }
+
+    // Multi-line selection - highlight each line
+    for (const auto& line : _lines) {
+        int lineY = line.y;
+        int lineEndY = lineY + line.height;
+
+        // Skip lines before selection
+        if (lineEndY <= _selection.y) continue;
+        // Stop after selection
+        if (lineY >= selEndY) break;
+
+        int hlX, hlW;
+        String hlText;
+
+        // First line of selection
+        if (lineY <= _selection.y && lineEndY > _selection.y) {
+            hlX = _selection.x;
+            hlW = line.x + line.width - hlX;
+            hlText = extractTextInRange(line, hlX, line.x + line.width);
+        }
+        // Last line of selection
+        else if (lineY < selEndY && lineEndY >= selEndY) {
+            hlX = line.x;
+            hlW = _selection.width;  // Approximate
+            hlText = extractTextInRange(line, hlX, hlX + hlW);
+        }
+        // Middle line
+        else {
+            hlX = line.x;
+            hlW = line.width;
+            hlText = line.text;
+        }
+
+        if (hlW <= 0) continue;
+
+        M5.Display.fillRect(hlX - padding, lineY - 2, hlW + padding * 2, line.height, TFT_BLACK);
+
+        // Draw white text on black background using configured font
+        if (useCustomFont) {
+            fm.drawStringWithColor(hlText, hlX, lineY, TFT_WHITE);
+        } else {
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setFont(&fonts::efontJA_24);
+            M5.Display.setTextSize(1.0);
+            M5.Display.setCursor(hlX, lineY);
+            M5.Display.print(hlText);
+        }
+    }
+
+    // Reset text color to default
+    M5.Display.setTextColor(TFT_BLACK);
 }
 
 int TextLayout::getByteXPosition(const LineInfo& line, int bytePos) {

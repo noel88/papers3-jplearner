@@ -38,6 +38,9 @@ public:
     // Clear all recorded positions
     void clear();
 
+    // Reserve space for expected number of lines
+    void reserve(int expectedLines) { _lines.reserve(expectedLines); }
+
     // Record a line during rendering
     void addLine(int paraIndex, int byteStart, int byteEnd,
                  int x, int y, int width, int height,
@@ -49,6 +52,7 @@ public:
 
     // Selection management
     void setSelection(const WordInfo& word);
+    void setRangeSelection(const WordInfo& start, const WordInfo& end);
     void clearSelection();
     bool hasSelection() const { return _hasSelection; }
 
@@ -80,4 +84,7 @@ private:
 
     // Calculate X position of byte within line
     int getByteXPosition(const LineInfo& line, int bytePos);
+
+    // Extract text from line within X range
+    String extractTextInRange(const LineInfo& line, int startX, int endX);
 };

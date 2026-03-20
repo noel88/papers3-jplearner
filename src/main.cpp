@@ -14,11 +14,15 @@
 #include "screens/ReadScreen.h"
 #include "screens/SettingsScreen.h"
 #include "screens/PlaceholderScreen.h"
+#include "screens/SRSScreen.h"
+#include "screens/StatsScreen.h"
 #include "Config.h"
 #include "FontManager.h"
 #include "WebUI.h"
 #include "UIHelpers.h"
 #include "SleepManager.h"
+#include "SRSManager.h"
+#include "DictionaryManager.h"
 
 // ============================================
 // Hardware Configuration
@@ -67,9 +71,9 @@ Config config;
 CopyScreen copyScreen;
 ReadScreen readScreen;
 SettingsScreen settingsScreen;
-PlaceholderScreen wordScreen("Word", "단어 학습", "Coming soon - SRS 단어 학습");
-PlaceholderScreen grammarScreen("Grammar", "문형 학습", "Coming soon - N2/N1 문법 패턴");
-PlaceholderScreen statsScreen("Stats", "학습 통계", "Coming soon - 학습 진행 현황");
+SRSScreen wordScreen;
+SRSScreen grammarScreen;
+StatsScreen statsScreen;
 
 // ============================================
 // State
@@ -87,6 +91,10 @@ File uploadFile;
 int batteryPercent = 100;
 unsigned long lastBatteryCheck = 0;
 const unsigned long BATTERY_CHECK_INTERVAL = 60000;
+
+// Review prompt state
+bool showingReviewPrompt = false;
+int reviewPromptDueCount = 0;
 
 // ============================================
 // SD Card Functions
@@ -196,6 +204,7 @@ bool loadConfig() {
     config.fallbackFont = doc["display"]["fallbackFont"] | "";
     config.fontSizePt = doc["display"]["fontSizePt"] | 24;
     config.sleepMinutes = doc["system"]["sleepMinutes"] | 5;
+    config.fullRefreshSec = doc["system"]["fullRefreshSec"] | 60;
     config.apSsid = doc["wifi"]["ap"]["ssid"] | "Papers3-JP";
     config.apPassword = doc["wifi"]["ap"]["password"] | "12345678";
     config.staSsid = doc["wifi"]["station"]["ssid"] | "";
@@ -219,6 +228,7 @@ bool saveConfig() {
     doc["display"]["fallbackFont"] = config.fallbackFont;
     doc["display"]["fontSizePt"] = config.fontSizePt;
     doc["system"]["sleepMinutes"] = config.sleepMinutes;
+    doc["system"]["fullRefreshSec"] = config.fullRefreshSec;
     doc["wifi"]["ap"]["ssid"] = config.apSsid;
     doc["wifi"]["ap"]["password"] = config.apPassword;
     doc["wifi"]["station"]["ssid"] = config.staSsid;
@@ -516,6 +526,8 @@ void startWiFiMode() {
 
     setupWebServer();
 
+    // Use fast mode to avoid long blocking
+    M5.Display.setEpdMode(epd_mode_t::epd_fast);
     M5.Display.fillScreen(TFT_WHITE);
     M5.Display.setTextColor(TFT_BLACK);
     M5.Display.setFont(&fonts::efontKR_24);
@@ -580,24 +592,110 @@ void stopWiFiMode() {
 }
 
 // ============================================
+// Review Prompt Dialog
+// ============================================
+void drawReviewPromptDialog(int dueCount) {
+    // Dialog dimensions
+    int dialogW = 400;
+    int dialogH = 200;
+    int dialogX = (SCREEN_WIDTH - dialogW) / 2;
+    int dialogY = (SCREEN_HEIGHT - dialogH) / 2;
+
+    // Draw dialog background with border
+    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.fillRect(dialogX, dialogY, dialogW, dialogH, TFT_WHITE);
+    M5.Display.drawRect(dialogX, dialogY, dialogW, dialogH, TFT_BLACK);
+    M5.Display.drawRect(dialogX + 1, dialogY + 1, dialogW - 2, dialogH - 2, TFT_BLACK);
+
+    // Title
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextColor(TFT_BLACK);
+    String title = "복습할 카드가 있어요!";
+    int titleW = M5.Display.textWidth(title.c_str());
+    M5.Display.setCursor(dialogX + (dialogW - titleW) / 2, dialogY + 30);
+    M5.Display.print(title);
+
+    // Message
+    M5.Display.setFont(&fonts::efontKR_16);
+    String message = String(dueCount) + "장의 카드가 대기 중입니다.";
+    int msgW = M5.Display.textWidth(message.c_str());
+    M5.Display.setCursor(dialogX + (dialogW - msgW) / 2, dialogY + 70);
+    M5.Display.print(message);
+
+    // Buttons
+    int btnW = 120;
+    int btnH = 45;
+    int btnY = dialogY + dialogH - btnH - 25;
+    int btnGap = 30;
+
+    // Skip button (left)
+    int skipBtnX = dialogX + (dialogW - 2 * btnW - btnGap) / 2;
+    M5.Display.fillRoundRect(skipBtnX, btnY, btnW, btnH, 6, TFT_WHITE);
+    M5.Display.drawRoundRect(skipBtnX, btnY, btnW, btnH, 6, TFT_DARKGRAY);
+
+    M5.Display.setFont(&fonts::efontKR_16);
+    M5.Display.setTextColor(TFT_DARKGRAY);
+    String skipText = "나중에";
+    int skipTextW = M5.Display.textWidth(skipText.c_str());
+    M5.Display.setCursor(skipBtnX + (btnW - skipTextW) / 2, btnY + (btnH - 16) / 2);
+    M5.Display.print(skipText);
+
+    // Start button (right)
+    int startBtnX = skipBtnX + btnW + btnGap;
+    M5.Display.fillRoundRect(startBtnX, btnY, btnW, btnH, 6, TFT_BLACK);
+    M5.Display.drawRoundRect(startBtnX, btnY, btnW, btnH, 6, TFT_BLACK);
+
+    M5.Display.setTextColor(TFT_WHITE);
+    String startText = "복습하기";
+    int startTextW = M5.Display.textWidth(startText.c_str());
+    M5.Display.setCursor(startBtnX + (btnW - startTextW) / 2, btnY + (btnH - 16) / 2);
+    M5.Display.print(startText);
+
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.display();
+    M5.Display.waitDisplay();
+}
+
+// Returns: 0 = skip, 1 = start review, -1 = no touch
+int handleReviewPromptTouch(int x, int y) {
+    int dialogW = 400;
+    int dialogH = 200;
+    int dialogX = (SCREEN_WIDTH - dialogW) / 2;
+    int dialogY = (SCREEN_HEIGHT - dialogH) / 2;
+
+    int btnW = 120;
+    int btnH = 45;
+    int btnY = dialogY + dialogH - btnH - 25;
+    int btnGap = 30;
+    int skipBtnX = dialogX + (dialogW - 2 * btnW - btnGap) / 2;
+    int startBtnX = skipBtnX + btnW + btnGap;
+
+    // Check if in button area
+    if (y >= btnY && y < btnY + btnH) {
+        if (x >= skipBtnX && x < skipBtnX + btnW) {
+            return 0;  // Skip
+        }
+        if (x >= startBtnX && x < startBtnX + btnW) {
+            return 1;  // Start review
+        }
+    }
+
+    return -1;  // No button touched
+}
+
+// ============================================
 // Display Refresh
 // ============================================
-int refreshCount = 0;
-const int FULL_CLEAR_INTERVAL = 3;  // More frequent full clear to reduce ghosting
+unsigned long lastFullClearTime = 0;
+bool forceFullClear = true;  // Force on first refresh
 
 void refreshDisplay() {
     if (needsFullRedraw || ScreenManager::instance().needsRedraw()) {
-        refreshCount++;
+        unsigned long now = millis();
 
-        // Force full clear on first refresh to remove old ghosting
-        static bool firstRefresh = true;
-        if (firstRefresh) {
-            refreshCount = FULL_CLEAR_INTERVAL;
-            firstRefresh = false;
-        }
-
-        // Full clear cycle only periodically (reduces ghosting)
-        if (refreshCount >= FULL_CLEAR_INTERVAL) {
+        // Full clear only after enough time has passed (reduces flicker)
+        unsigned long fullRefreshMs = config.fullRefreshSec * 1000UL;
+        if (forceFullClear || (fullRefreshMs > 0 && (now - lastFullClearTime >= fullRefreshMs))) {
             // Use quality mode for full clear
             M5.Display.setEpdMode(epd_mode_t::epd_quality);
             M5.Display.fillScreen(TFT_BLACK);
@@ -608,14 +706,18 @@ void refreshDisplay() {
             M5.Display.fillScreen(TFT_WHITE);
             M5.Display.display();
             M5.Display.waitDisplay();
-            refreshCount = 0;
+            lastFullClearTime = now;
+            forceFullClear = false;
         }
 
         // Use fast mode for normal updates (less flicker)
+        // Wrap all drawing in startWrite/endWrite to ensure tab bar is included
         M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
         M5.Display.fillScreen(TFT_WHITE);
         ScreenManager::instance().draw();
         drawTabBar();
+        M5.Display.endWrite();
         M5.Display.display();
         M5.Display.waitDisplay();
         needsFullRedraw = false;
@@ -623,7 +725,9 @@ void refreshDisplay() {
     } else if (needsTabRedraw) {
         // Tab-only update - fastest mode
         M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+        M5.Display.startWrite();
         drawTabBar();
+        M5.Display.endWrite();
         M5.Display.display();
         M5.Display.waitDisplay();
         needsTabRedraw = false;
@@ -639,9 +743,13 @@ static size_t g_fontBufferSize = 0;
 
 void setup() {
     // === CRITICAL: Reserve PSRAM for font BEFORE M5.begin() fragments it ===
-    // Allocate 6MB buffer for font (will be used by FontManager later)
-    g_fontBufferSize = 6 * 1024 * 1024;  // 6MB
+    // Allocate 6MB buffer for font (dictionary uses SD-card direct search, no PSRAM needed)
+    g_fontBufferSize = 6 * 1024 * 1024;  // 6MB for fonts
+
     g_fontBuffer = (uint8_t*)heap_caps_malloc(g_fontBufferSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    // We can't use Serial yet (before M5.begin), but we can store the values
+    // and print them after Serial is initialized
 
     auto cfg = M5.config();
     cfg.clear_display = false;  // We handle clear in refreshDisplay()
@@ -656,10 +764,17 @@ void setup() {
     }
 
     Serial.println("\n\n=== Papers3 JP Learner Starting ===");
-    Serial.printf("Pre-allocated font buffer: %p (%d bytes)\n", g_fontBuffer, g_fontBufferSize);
-    Serial.printf("PSRAM after M5.begin: Total=%d, Free=%d, Largest=%d\n",
+    Serial.printf("Font buffer allocation: %s at %p (%d bytes)\n",
+                  g_fontBuffer ? "SUCCESS" : "FAILED", g_fontBuffer, g_fontBufferSize);
+    Serial.printf("PSRAM Status: Total=%d, Free=%d, LargestBlock=%d\n",
                   ESP.getPsramSize(), ESP.getFreePsram(),
                   heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+
+    // Verify buffer is in PSRAM
+    if (g_fontBuffer) {
+        bool inPsram = heap_caps_check_integrity_addr((intptr_t)g_fontBuffer, false);
+        Serial.printf("Font buffer in PSRAM: %s\n", inPsram ? "YES" : "UNKNOWN");
+    }
     Serial.flush();
 
     // Configure display
@@ -690,20 +805,41 @@ void setup() {
 
     // Initialize FontManager with pre-allocated buffer
     FontManager& fm = FontManager::instance();
+    Serial.println("=== FontManager Setup ===");
+    Serial.printf("Pre-allocated buffer: %p (%d bytes, %.1f MB)\n",
+                  g_fontBuffer, g_fontBufferSize, g_fontBufferSize / 1048576.0f);
     if (g_fontBuffer != nullptr) {
         fm.setExternalBuffer(g_fontBuffer, g_fontBufferSize);
+        Serial.println("External buffer registered with FontManager");
+    } else {
+        Serial.println("WARNING: No external buffer available for FontManager!");
     }
+    Serial.flush();
     fm.init();
 
     // Load configured font
+    Serial.println("=== Font Configuration ===");
+    Serial.printf("config.primaryFont: '%s' (len=%d)\n",
+                  config.primaryFont.c_str(), config.primaryFont.length());
+    Serial.printf("Available fonts from scan: %d\n", fm.getAvailableFonts().size());
+    for (const auto& f : fm.getAvailableFonts()) {
+        Serial.printf("  - %s (%d bytes)\n", f.filename.c_str(), f.fileSize);
+    }
+    Serial.flush();
+
     if (config.primaryFont.length() > 0) {
-        Serial.printf("Loading font: %s\n", config.primaryFont.c_str());
+        Serial.printf("Loading primary font: %s\n", config.primaryFont.c_str());
         Serial.flush();
         bool loaded = fm.setPrimaryFont(config.primaryFont);
-        Serial.printf("Font load result: %d, hasCustomFont: %d\n", loaded, fm.hasCustomFont());
+        Serial.printf("Primary font load: %s (hasCustomFont=%d, lastError=%d)\n",
+                      loaded ? "SUCCESS" : "FAILED", fm.hasCustomFont(), fm.getLastError());
         Serial.flush();
+    } else {
+        Serial.println("No primary font configured, using built-in font");
     }
+
     if (config.fallbackFont.length() > 0) {
+        Serial.printf("Loading fallback font: %s\n", config.fallbackFont.c_str());
         fm.setFallbackFont(config.fallbackFont);
     }
 
@@ -738,6 +874,12 @@ void setup() {
     // Initialize sleep manager
     SleepManager::instance().init();
 
+    // Initialize SRS system
+    SRSManager::instance().init();
+
+    // Initialize Dictionary (optional - fails gracefully if dict files not present)
+    DictionaryManager::instance().init();
+
     // Draw initial screen
     needsFullRedraw = true;
     refreshDisplay();
@@ -769,11 +911,24 @@ void loop() {
     if (!wifiMode) {
         sleepMgr.update();
 
-        // If we just woke up from sleep, trigger full redraw and skip this loop
+        // If we just woke up from sleep, trigger full redraw
         if (sleepMgr.justWokeUp()) {
             needsFullRedraw = true;
-            refreshCount = FULL_CLEAR_INTERVAL;
+            forceFullClear = true;
             sleepMgr.clearWakeFlag();
+
+            // Check if we should show review prompt
+            if (sleepMgr.shouldShowReviewPrompt()) {
+                showingReviewPrompt = true;
+                reviewPromptDueCount = sleepMgr.getPromptDueCount();
+                sleepMgr.clearReviewPromptFlag();
+
+                // Draw current screen first, then overlay dialog
+                refreshDisplay();
+                drawReviewPromptDialog(reviewPromptDueCount);
+                return;
+            }
+
             // Force immediate redraw
             refreshDisplay();
             return;
@@ -781,6 +936,9 @@ void loop() {
     }
 
     updateBattery();
+
+    // Physical power button disabled due to stability issues
+    // Use Settings screen to access WiFi mode instead
 
     auto touch = M5.Touch.getDetail();
 
@@ -798,6 +956,30 @@ void loop() {
     }
 
     ScreenManager& sm = ScreenManager::instance();
+
+    // Review prompt handling
+    if (showingReviewPrompt) {
+        if (touch.wasPressed()) {
+            sleepMgr.resetActivity();
+            int result = handleReviewPromptTouch(touch.x, touch.y);
+
+            if (result == 0) {
+                // Skip - dismiss dialog and continue
+                showingReviewPrompt = false;
+                needsFullRedraw = true;
+                forceFullClear = true;
+            } else if (result == 1) {
+                // Start review - switch to word SRS screen
+                showingReviewPrompt = false;
+                sm.switchTo(TabIndex::TAB_WORD);
+                needsFullRedraw = true;
+                forceFullClear = true;
+            }
+            // If result == -1, touch was outside buttons, wait for valid touch
+        }
+        delay(10);
+        return;
+    }
 
     // Touch handling
     if (touch.wasPressed()) {
@@ -818,22 +1000,17 @@ void loop() {
                 sm.switchTo((TabIndex)tabTouched);
                 needsFullRedraw = true;
                 // Force full clear on tab switch to eliminate ghosting
-                refreshCount = FULL_CLEAR_INTERVAL;
+                forceFullClear = true;
             }
         }
     } else if (touch.isPressed()) {
         sleepMgr.resetActivity();  // Reset sleep timer on touch
-        // Dragging
-        if (sm.handleTouchMove(touch.x, touch.y)) {
-            needsFullRedraw = true;
-            refreshDisplay();
-        }
+        // Dragging - screen handles its own partial updates
+        sm.handleTouchMove(touch.x, touch.y);
     } else if (touch.wasReleased()) {
         sleepMgr.resetActivity();  // Reset sleep timer on touch
-        // End drag
-        if (sm.handleTouchEnd()) {
-            needsFullRedraw = true;
-        }
+        // End drag - screen handles its own partial updates
+        sm.handleTouchEnd();
     }
 
     refreshDisplay();

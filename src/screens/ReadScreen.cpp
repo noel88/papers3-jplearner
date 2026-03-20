@@ -18,7 +18,12 @@ ReadScreen::ReadScreen()
       _chapterListScroll(0),
       _currentChapter(0),
       _currentPage(0),
-      _totalPages(0) {
+      _totalPages(0),
+      _touchStartTime(0),
+      _touchStartX(0),
+      _touchStartY(0),
+      _touchInContentArea(false),
+      _inDragSelection(false) {
 }
 
 void ReadScreen::onEnter() {
@@ -30,6 +35,14 @@ void ReadScreen::onEnter() {
         fm.setPrimaryFont(config.primaryFont);
         fm.setFontSize(config.fontSizePt);
     }
+
+    // Configure content renderer
+    ContentRenderer::Config renderConfig;
+    renderConfig.headerHeight = HEADER_HEIGHT;
+    renderConfig.navHeight = NAV_HEIGHT;
+    renderConfig.tabBarHeight = TAB_BAR_HEIGHT;
+    renderConfig.fontSizePt = config.fontSizePt;
+    _contentRenderer.setConfig(renderConfig);
 
     if (_mode == Mode::BookSelection) {
         scanBooks();
@@ -215,14 +228,16 @@ void ReadScreen::drawBookSelection() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(UI::SIZE_TITLE);
     M5.Display.setTextColor(TFT_BLACK);
-    UI::drawBoldText("책 선택", PAD_X, 15);
+    int fontH = M5.Display.fontHeight();
+    int headerY = (HEADER_HEIGHT - fontH) / 2;
+    UI::drawBoldText("책 선택", PAD_X, headerY);
 
     // Book count (bold)
     M5.Display.setTextColor(TFT_DARKGRAY);
     M5.Display.setTextSize(UI::SIZE_CONTENT);
     String countStr = String(_books.size()) + "권";
     int countW = M5.Display.textWidth(countStr.c_str());
-    UI::drawBoldText(countStr.c_str(), SCREEN_WIDTH - PAD_X - countW, 15);
+    UI::drawBoldText(countStr.c_str(), SCREEN_WIDTH - PAD_X - countW, headerY);
 
     // Separator
     M5.Display.drawLine(PAD_X, HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, HEADER_HEIGHT - 1, TFT_BLACK);
@@ -379,53 +394,7 @@ void ReadScreen::loadChapter(int chapterIndex) {
 }
 
 void ReadScreen::calculatePages() {
-    _pageBreaks.clear();
-    _pageBreaks.push_back(0);
-
-    if (_paragraphs.empty()) {
-        _totalPages = 0;
-        return;
-    }
-
-    FontManager& fm = FontManager::instance();
-    int fontH;
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-
-    if (fm.hasCustomFont()) {
-        // Use custom font size for calculation
-        fontH = config.fontSizePt + 4;  // Approximate line height
-    } else {
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        fontH = M5.Display.fontHeight();
-    }
-
-    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
-    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT - PAD_Y * 2;
-
-    int currentHeight = 0;
-    int paraIndex = 0;
-    int lineSpacing = 8;
-    int paraSpacing = 24;
-
-    while (paraIndex < _paragraphs.size()) {
-        const String& para = _paragraphs[paraIndex];
-
-        int paraWidth = fm.hasCustomFont() ? fm.getTextWidth(para) : M5.Display.textWidth(para.c_str());
-        int lines = (paraWidth / contentW) + 1;
-        int paraHeight = lines * (fontH + lineSpacing) + paraSpacing;
-
-        if (currentHeight + paraHeight > contentH && currentHeight > 0) {
-            _pageBreaks.push_back(paraIndex);
-            currentHeight = paraHeight;
-        } else {
-            currentHeight += paraHeight;
-        }
-
-        paraIndex++;
-    }
-
-    _totalPages = _pageBreaks.size();
+    _totalPages = _contentRenderer.calculatePages(_paragraphs, _pageBreaks);
 }
 
 void ReadScreen::drawReading() {
@@ -441,20 +410,23 @@ void ReadScreen::drawReadingHeader() {
     M5.Display.setTextSize(1.0);
     M5.Display.setTextColor(TFT_BLACK);
 
+    int fontH = M5.Display.fontHeight();
+    int headerY = (HEADER_HEIGHT - fontH) / 2;
+
     // Back button (left)
-    M5.Display.setCursor(PAD_X, 15);
+    M5.Display.setCursor(PAD_X, headerY);
     M5.Display.print("< 목록");
 
     // TOC button (right side, before chapter nav)
     String tocBtn = "목차";
     int tocW = M5.Display.textWidth(tocBtn.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - 150, 15);
+    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - 150, headerY);
     M5.Display.print(tocBtn);
 
     // Chapter navigation (far right)
     String chapterNav = String(_currentChapter + 1) + "/" + String(_epubParser.getChapterCount());
     int navW = M5.Display.textWidth(chapterNav.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - navW, 15);
+    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - navW, headerY);
     M5.Display.print(chapterNav);
 
     // Chapter title (center)
@@ -472,7 +444,7 @@ void ReadScreen::drawReadingHeader() {
         }
 
         int titleW = M5.Display.textWidth(chapterTitle.c_str());
-        M5.Display.setCursor((SCREEN_WIDTH - titleW) / 2, 15);
+        M5.Display.setCursor((SCREEN_WIDTH - titleW) / 2, headerY);
         M5.Display.print(chapterTitle);
     }
 
@@ -480,96 +452,11 @@ void ReadScreen::drawReadingHeader() {
 }
 
 void ReadScreen::drawReadingContent() {
-    int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
-    int contentY = HEADER_HEIGHT + PAD_Y;
-    int contentH = availableHeight - HEADER_HEIGHT - NAV_HEIGHT;
-
-    M5.Display.fillRect(0, HEADER_HEIGHT, SCREEN_WIDTH, contentH, TFT_WHITE);
-
-    // Clear text layout for new page
-    _textLayout.clear();
-
-    if (_currentPage >= _totalPages || _pageBreaks.empty()) {
-        return;
-    }
-
-    FontManager& fm = FontManager::instance();
-    bool useCustomFont = fm.hasCustomFont();
-
-    int fontH;
-    if (useCustomFont) {
-        fontH = config.fontSizePt + 4;
-    } else {
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        M5.Display.setTextColor(TFT_BLACK);
-        fontH = M5.Display.fontHeight();
-    }
-
-    int contentW = SCREEN_WIDTH - PAD_X * 2;
-    int maxY = availableHeight - NAV_HEIGHT - PAD_Y;
-    int lineSpacing = 8;
-    int paraSpacing = 24;
-
-    int startPara = _pageBreaks[_currentPage];
-    int endPara = (_currentPage + 1 < _totalPages) ? _pageBreaks[_currentPage + 1] : _paragraphs.size();
-
-    int y = contentY;
-
-    for (int i = startPara; i < endPara && y < maxY; i++) {
-        const String& para = _paragraphs[i];
-
-        int bytePos = 0;
-        int byteLen = para.length();
-
-        while (bytePos < byteLen && y < maxY) {
-            int lineEnd = bytePos;
-
-            while (lineEnd < byteLen) {
-                int charLen = 1;
-                uint8_t c = para[lineEnd];
-                if (c >= 0xF0) charLen = 4;
-                else if (c >= 0xE0) charLen = 3;
-                else if (c >= 0xC0) charLen = 2;
-
-                String sub = para.substring(bytePos, lineEnd + charLen);
-                int subWidth = useCustomFont ? fm.getTextWidth(sub) : M5.Display.textWidth(sub.c_str());
-                if (subWidth > contentW) break;
-
-                lineEnd += charLen;
-            }
-
-            if (lineEnd == bytePos) lineEnd += 1;
-
-            String lineText = para.substring(bytePos, lineEnd);
-            int lineWidth = useCustomFont ? fm.getTextWidth(lineText) : M5.Display.textWidth(lineText.c_str());
-
-            // Record line position for text selection
-            _textLayout.addLine(i, bytePos, lineEnd, PAD_X, y, lineWidth, fontH + lineSpacing, lineText);
-
-            // Draw highlight if this line contains selection
-            if (_textLayout.hasSelection()) {
-                _textLayout.drawHighlight();
-            }
-
-            if (useCustomFont) {
-                fm.drawString(lineText, PAD_X, y);
-            } else {
-                M5.Display.setCursor(PAD_X, y);
-                M5.Display.print(lineText);
-            }
-
-            bytePos = lineEnd;
-            y += fontH + lineSpacing;
-        }
-
-        y += paraSpacing - lineSpacing;
-    }
-
-    // Draw popup menu if visible
-    if (_popupMenu.isVisible()) {
-        _popupMenu.draw();
-    }
+    _contentRenderer.renderPage(
+        _paragraphs, _pageBreaks,
+        _currentPage, _totalPages,
+        _textLayout, _popupMenu
+    );
 }
 
 void ReadScreen::drawReadingNavigation() {
@@ -582,7 +469,8 @@ void ReadScreen::drawReadingNavigation() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(UI::SIZE_CONTENT);
 
-    int buttonY = navY + (NAV_HEIGHT - 30) / 2;
+    int fontH = M5.Display.fontHeight();
+    int buttonY = navY + (NAV_HEIGHT - fontH) / 2;
 
     // Previous page/chapter (bold)
     bool canGoPrev = _currentPage > 0 || _currentChapter > 0;
@@ -621,13 +509,23 @@ bool ReadScreen::handleReadingTouch(int x, int y) {
     int navY = availableHeight - NAV_HEIGHT;
     int contentY = HEADER_HEIGHT;
 
+    // Handle dictionary popup first
+    if (_selectionHelper.isDictionaryVisible()) {
+        _selectionHelper.closeDictionary();
+        _textLayout.clearSelection();
+        _popupMenu.hide();
+        requestRedraw();
+        return true;
+    }
+
     // Handle popup menu touch first
     if (_popupMenu.isVisible()) {
         PopupMenu::Action action = _popupMenu.handleTouch(x, y);
         if (action != PopupMenu::NONE) {
             handlePopupAction(action);
-            return true;
         }
+        // Always consume touch when popup is visible
+        return true;
     }
 
     // Header touch
@@ -646,10 +544,14 @@ bool ReadScreen::handleReadingTouch(int x, int y) {
         }
     }
 
-    // Content area touch - text selection
+    // Content area touch - start tracking for long press/drag
     if (y >= contentY && y < navY) {
-        handleWordSelection(x, y);
-        return true;
+        _touchStartX = x;
+        _touchStartY = y;
+        _touchStartTime = millis();
+        _touchInContentArea = true;
+        _inDragSelection = false;
+        return false;  // Don't trigger redraw yet
     }
 
     // Navigation area
@@ -706,78 +608,40 @@ void ReadScreen::handleWordSelection(int x, int y) {
         int popupY = word.y;
         _popupMenu.show(popupX, popupY, word.text);
 
-        // Redraw to show highlight and popup
-        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        // Draw highlight and popup - partial update only
+        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
         M5.Display.startWrite();
-        drawReadingContent();
+        _textLayout.drawHighlight();
+        _popupMenu.draw();
         M5.Display.endWrite();
 
         Serial.printf("Selected word: '%s'\n", word.text.c_str());
-    } else {
-        // Touch on empty area - clear selection
-        if (_textLayout.hasSelection() || _popupMenu.isVisible()) {
-            _textLayout.clearSelection();
-            _popupMenu.hide();
-
-            // Redraw to remove highlight
-            M5.Display.setEpdMode(epd_mode_t::epd_fast);
-            M5.Display.startWrite();
-            drawReadingContent();
-            M5.Display.endWrite();
-        }
     }
 }
 
 void ReadScreen::handlePopupAction(PopupMenu::Action action) {
+    // Handle NONE case (touch inside popup but not on button)
+    if (action == PopupMenu::NONE) {
+        return;  // Do nothing, keep popup open
+    }
+
     String selectedText = _popupMenu.getSelectedText();
 
-    switch (action) {
-        case PopupMenu::SEARCH:
-            // TODO: Phase 4 - Dictionary search
-            Serial.printf("Search: %s\n", selectedText.c_str());
-            break;
+    // Use helper to handle action
+    auto redrawCallback = [this]() {
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
+        drawReadingContent();
+        M5.Display.endWrite();
+    };
 
-        case PopupMenu::SAVE:
-            saveToVocabulary(selectedText);
-            Serial.printf("Saved to vocabulary: %s\n", selectedText.c_str());
-            break;
+    bool keepSelection = _selectionHelper.handleAction(action, selectedText, redrawCallback);
 
-        case PopupMenu::GRAMMAR:
-            saveToGrammar(selectedText);
-            Serial.printf("Saved to grammar: %s\n", selectedText.c_str());
-            break;
-
-        case PopupMenu::CANCEL:
-        default:
-            break;
-    }
-
-    // Clear selection and hide popup
-    _textLayout.clearSelection();
-    _popupMenu.hide();
-
-    // Redraw
-    M5.Display.setEpdMode(epd_mode_t::epd_fast);
-    M5.Display.startWrite();
-    drawReadingContent();
-    M5.Display.endWrite();
-}
-
-void ReadScreen::saveToVocabulary(const String& word) {
-    // Save word to vocabulary file in LittleFS
-    File file = LittleFS.open("/userdata/vocabulary.txt", FILE_APPEND);
-    if (file) {
-        file.println(word);
-        file.close();
-    }
-}
-
-void ReadScreen::saveToGrammar(const String& text) {
-    // Save text to grammar patterns file in LittleFS
-    File file = LittleFS.open("/userdata/grammar.txt", FILE_APPEND);
-    if (file) {
-        file.println(text);
-        file.close();
+    if (!keepSelection) {
+        // Clear selection and hide popup
+        _textLayout.clearSelection();
+        _popupMenu.hide();
+        redrawCallback();
     }
 }
 
@@ -821,6 +685,102 @@ bool ReadScreen::handleTouchStart(int x, int y) {
             return handleChapterListTouch(x, y);
         case Mode::Reading:
             return handleReadingTouch(x, y);
+    }
+    return false;
+}
+
+bool ReadScreen::handleTouchMove(int x, int y) {
+    // Only handle drag selection in Reading mode
+    if (_mode != Mode::Reading || !_touchInContentArea) {
+        return false;
+    }
+
+    // Check if moved enough to start drag selection
+    int dx = abs(x - _touchStartX);
+    int dy = abs(y - _touchStartY);
+
+    if (!_inDragSelection && (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD)) {
+        // Start drag selection - find word at start position
+        if (_textLayout.findWordAt(_touchStartX, _touchStartY, _dragStartWord)) {
+            _inDragSelection = true;
+            Serial.println("Started drag selection");
+        }
+    }
+
+    // Update drag selection
+    if (_inDragSelection) {
+        WordInfo dragEndWord;
+        if (_textLayout.findWordAt(x, y, dragEndWord)) {
+            // Update range selection
+            _textLayout.setRangeSelection(_dragStartWord, dragEndWord);
+
+            // Must redraw full content to clear old highlight
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            drawReadingContent();
+            M5.Display.endWrite();
+        }
+        return true;
+    }
+
+    return false;
+}
+
+bool ReadScreen::handleTouchEnd() {
+    // Only handle touch end in Reading mode
+    if (_mode == Mode::Reading && _touchInContentArea) {
+        _touchInContentArea = false;
+
+        // If we were in drag selection, show popup menu
+        if (_inDragSelection) {
+            _inDragSelection = false;
+
+            if (_textLayout.hasSelection()) {
+                String selectedText = _textLayout.getSelectedText();
+
+                // Show popup menu at end position
+                auto touch = M5.Touch.getDetail();
+                _popupMenu.show(touch.x, touch.y, selectedText);
+
+                // Redraw with popup
+                M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+                M5.Display.startWrite();
+                _textLayout.drawHighlight();
+                _popupMenu.draw();
+                M5.Display.endWrite();
+
+                Serial.printf("Drag selection complete: '%s'\n", selectedText.c_str());
+                return true;
+            }
+            return false;
+        }
+
+        // Not drag selection - check for long press or tap
+        unsigned long pressDuration = millis() - _touchStartTime;
+        int dx = abs(M5.Touch.getDetail().x - _touchStartX);
+        int dy = abs(M5.Touch.getDetail().y - _touchStartY);
+
+        // Cancel if moved too much (not a tap/long press)
+        if (dx > TOUCH_MOVE_THRESHOLD || dy > TOUCH_MOVE_THRESHOLD) {
+            return false;
+        }
+
+        // Long press - word selection
+        if (pressDuration >= LONG_PRESS_MS) {
+            handleWordSelection(_touchStartX, _touchStartY);
+            return true;
+        }
+
+        // Short tap - clear selection if any
+        if (_textLayout.hasSelection() || _popupMenu.isVisible()) {
+            _textLayout.clearSelection();
+            _popupMenu.hide();
+            M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+            M5.Display.startWrite();
+            drawReadingContent();
+            M5.Display.endWrite();
+            return true;
+        }
     }
     return false;
 }
@@ -1018,3 +978,4 @@ void ReadScreen::goToChapter(int chapterIndex) {
 
     Serial.printf("ReadScreen: Jumped to chapter %d\n", chapterIndex);
 }
+

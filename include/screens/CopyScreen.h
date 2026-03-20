@@ -5,6 +5,8 @@
 #include "EpubParser.h"
 #include "TextLayout.h"
 #include "PopupMenu.h"
+#include "TextSelectionHelper.h"
+#include "ContentRenderer.h"
 #include <vector>
 
 /**
@@ -43,6 +45,8 @@ public:
     void onEnter() override;
     void draw() override;
     bool handleTouchStart(int x, int y) override;
+    bool handleTouchMove(int x, int y) override;
+    bool handleTouchEnd() override;
 
     // ============================================
     // Content Loading
@@ -77,6 +81,19 @@ private:
     TextLayout _textLayout;
     PopupMenu _popupMenu;
 
+    // Content rendering
+    ContentRenderer _contentRenderer;
+
+    // Touch tracking for long press and drag selection
+    int _touchStartX;
+    int _touchStartY;
+    unsigned long _touchStartTime;
+    bool _touchInContentArea;
+    bool _inDragSelection;      // True when dragging to extend selection
+    WordInfo _dragStartWord;    // First word selected when drag started
+    static constexpr unsigned long LONG_PRESS_MS = 400;  // 400ms for long press
+    static constexpr int TOUCH_MOVE_THRESHOLD = 20;      // Max movement for long press
+
     // Drawing methods
     void drawHeader();
     void drawPageContent();
@@ -97,8 +114,7 @@ private:
     void saveReadingProgress();  // Save current chapter/page
 
     // Text selection helpers
+    TextSelectionHelper _selectionHelper;
     void handleWordSelection(int x, int y);
     void handlePopupAction(PopupMenu::Action action);
-    void saveToVocabulary(const String& word);
-    void saveToGrammar(const String& text);
 };

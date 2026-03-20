@@ -53,6 +53,9 @@ public:
     // Falls back to built-in font if primary doesn't have glyph
     int drawString(const String& text, int x, int y);
 
+    // Draw text with specified color (for highlights)
+    int drawStringWithColor(const String& text, int x, int y, uint16_t color);
+
     // Get text width
     int getTextWidth(const String& text);
 

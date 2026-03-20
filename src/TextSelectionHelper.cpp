@@ -2,13 +2,10 @@
 
 bool TextSelectionHelper::handleAction(PopupMenu::Action action, const String& selectedText,
                                        std::function<void()> onRedraw) {
+    Serial.printf("TextSelectionHelper: handleAction(%d, '%s')\n", (int)action, selectedText.c_str());
     _redrawCallback = onRedraw;
 
     switch (action) {
-        case PopupMenu::SEARCH:
-            showDictionaryPopup(selectedText);
-            return true;  // Dictionary shown, don't clear selection
-
         case PopupMenu::SAVE:
             if (saveToVocabulary(selectedText)) {
                 showToast("단어 저장됨", onRedraw);
@@ -42,46 +39,70 @@ bool TextSelectionHelper::handleDictionaryTouch() {
 }
 
 void TextSelectionHelper::showToast(const char* message, std::function<void()> onRedraw) {
+    Serial.printf("TextSelectionHelper: showToast('%s')\n", message);
+
     int toastW = 200;
     int toastH = 50;
     int toastX = (SCREEN_WIDTH - toastW) / 2;
-    int toastY = (SCREEN_HEIGHT - 60 - toastH) / 2;  // 60 = TAB_BAR_HEIGHT approx
+    // Position toast in center of screen vertically
+    int toastY = (SCREEN_HEIGHT - 60 - toastH) / 2;  // 60 = TAB_BAR_HEIGHT
 
     M5.Display.setEpdMode(epd_mode_t::epd_fastest);
     M5.Display.startWrite();
 
-    // Draw toast background
+    // Draw toast background with shadow effect
     M5.Display.fillRect(toastX, toastY, toastW, toastH, TFT_WHITE);
     M5.Display.drawRect(toastX, toastY, toastW, toastH, TFT_BLACK);
     M5.Display.drawRect(toastX + 1, toastY + 1, toastW - 2, toastH - 2, TFT_BLACK);
 
-    // Draw message centered
+    // Draw message centered using built-in font
+    M5.Display.setFont(&fonts::efontKR_16);
     M5.Display.setTextColor(TFT_BLACK);
-    M5.Display.setTextSize(1);
     M5.Display.setTextDatum(MC_DATUM);
     M5.Display.drawString(message, toastX + toastW / 2, toastY + toastH / 2);
 
     M5.Display.endWrite();
 
-    // Brief delay then redraw
+    // Wait for user to see the toast
     delay(800);
 
+    // Restore screen by calling redraw callback
     if (onRedraw) {
         onRedraw();
     }
 }
 
 bool TextSelectionHelper::saveToVocabulary(const String& word) {
+    Serial.printf("TextSelectionHelper: saveToVocabulary('%s')\n", word.c_str());
+
     SRSManager& srs = SRSManager::instance();
 
     // Check if already saved
     if (srs.hasCard(word, "word")) {
+        Serial.println("TextSelectionHelper: Already saved");
         showToast("이미 저장됨", _redrawCallback);
         return false;
     }
 
-    // Add as SRS card
-    String cardId = srs.addCard("word", word, "");
+    // Look up dictionary for meaning/reading (can be slow on SD card)
+    Serial.println("TextSelectionHelper: Looking up dictionary...");
+    String extra = "";
+    DictionaryManager& dict = DictionaryManager::instance();
+    if (dict.isAvailable()) {
+        DictEntry entry = dict.lookupWord(word);
+        if (!entry.word.isEmpty()) {
+            // Format: reading|meaning|pos
+            extra = entry.reading + "|" + entry.meanings + "|" + entry.partOfSpeech;
+            Serial.printf("TextSelectionHelper: Found dict entry for '%s'\n", word.c_str());
+        } else {
+            Serial.println("TextSelectionHelper: No dict entry found");
+        }
+    }
+
+    // Add as SRS card with dictionary data
+    Serial.println("TextSelectionHelper: Adding card...");
+    String cardId = srs.addCard("word", word, extra);
+    Serial.printf("TextSelectionHelper: Card ID = '%s'\n", cardId.c_str());
     return cardId.length() > 0;
 }
 
@@ -94,8 +115,18 @@ bool TextSelectionHelper::saveToGrammar(const String& text) {
         return false;
     }
 
+    // Try dictionary lookup for grammar patterns too
+    String extra = "";
+    DictionaryManager& dict = DictionaryManager::instance();
+    if (dict.isAvailable()) {
+        DictEntry entry = dict.lookupWord(text);
+        if (!entry.word.isEmpty()) {
+            extra = entry.reading + "|" + entry.meanings + "|" + entry.partOfSpeech;
+        }
+    }
+
     // Add as SRS card
-    String cardId = srs.addCard("grammar", text, "");
+    String cardId = srs.addCard("grammar", text, extra);
     return cardId.length() > 0;
 }
 
@@ -107,11 +138,14 @@ void TextSelectionHelper::showDictionaryPopup(const String& word) {
         return;
     }
 
-    // Look up the word
-    _dictResults = dict.lookupByWord(word);
+    // Look up the word (SD-card direct search)
+    _dictResults.clear();
+    DictEntry entry = dict.lookupWord(word);
 
-    if (_dictResults.empty()) {
-        // Try partial search
+    if (!entry.word.isEmpty()) {
+        _dictResults.push_back(entry);
+    } else {
+        // Try partial search if exact match not found
         _dictResults = dict.search(word, 5);
     }
 
@@ -122,13 +156,18 @@ void TextSelectionHelper::showDictionaryPopup(const String& word) {
 
     _showingDictionary = true;
 
+    // Redraw page content first to have clean background
+    if (_redrawCallback) {
+        _redrawCallback();
+    }
+
     // Draw dictionary popup
     int popupW = 450;
     int popupH = 300;
     int popupX = (SCREEN_WIDTH - popupW) / 2;
     int popupY = (SCREEN_HEIGHT - 60 - popupH) / 2;  // 60 = TAB_BAR_HEIGHT approx
 
-    M5.Display.setEpdMode(epd_mode_t::epd_quality);
+    M5.Display.setEpdMode(epd_mode_t::epd_fast);
     M5.Display.startWrite();
 
     // Draw popup background with border

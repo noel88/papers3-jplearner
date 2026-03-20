@@ -503,7 +503,8 @@ void CopyScreen::drawNavigation() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(UI::SIZE_CONTENT);
 
-    int buttonY = navY + (NAV_HEIGHT - 30) / 2;
+    int fontH = M5.Display.fontHeight();
+    int buttonY = navY + (NAV_HEIGHT - fontH) / 2;
     int buttonW = 120;
 
     // Previous button (left, bold)
@@ -718,10 +719,10 @@ bool CopyScreen::handleTouchMove(int x, int y) {
             // Update selection
             _textLayout.setRangeSelection(_dragStartWord, currentWord);
 
-            // Redraw only highlight - partial update
+            // Must redraw full content to clear old highlight
             M5.Display.setEpdMode(epd_mode_t::epd_fastest);
             M5.Display.startWrite();
-            _textLayout.drawHighlight();
+            drawPageContent();
             M5.Display.endWrite();
         }
     }
@@ -816,22 +817,25 @@ void CopyScreen::handlePopupAction(PopupMenu::Action action) {
 
     String selectedText = _popupMenu.getSelectedText();
 
-    // Use helper to handle action
+    // Clear selection and hide popup first
+    _textLayout.clearSelection();
+    _popupMenu.hide();
+
+    // Redraw callback for after toast disappears
     auto redrawCallback = [this]() {
-        M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+        M5.Display.setEpdMode(epd_mode_t::epd_fast);
         M5.Display.startWrite();
+        drawHeader();
         drawPageContent();
+        drawNavigation();
         M5.Display.endWrite();
     };
 
-    bool keepSelection = _selectionHelper.handleAction(action, selectedText, redrawCallback);
+    // Draw clean screen before showing toast
+    redrawCallback();
 
-    if (!keepSelection) {
-        // Clear selection and hide popup
-        _textLayout.clearSelection();
-        _popupMenu.hide();
-        redrawCallback();
-    }
+    // Handle the action (shows toast, waits, then calls redrawCallback again)
+    _selectionHelper.handleAction(action, selectedText, redrawCallback);
 }
 
 void CopyScreen::loadReadingProgress() {

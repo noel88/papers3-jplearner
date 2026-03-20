@@ -113,13 +113,15 @@ void SRSScreen::drawFront() {
     int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
     int contentY = HEADER_HEIGHT;
     int contentH = availableHeight - HEADER_HEIGHT;
+    int margin = 40;  // Stronger margin for better readability
+    int contentWidth = SCREEN_WIDTH - margin * 2;
 
     // Card type indicator
     M5.Display.setFont(&fonts::efontKR_16);
     M5.Display.setTextColor(TFT_DARKGRAY);
     String typeText = (_currentCard->type == "word") ? "[단어]" : "[문형]";
     int typeW = M5.Display.textWidth(typeText.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - typeW, 15);
+    M5.Display.setCursor(SCREEN_WIDTH - margin - typeW, 15);
     M5.Display.print(typeText);
 
     // Main content - the word/phrase
@@ -131,13 +133,17 @@ void SRSScreen::drawFront() {
     if (front.length() > 30) fontSize = 32;
     else if (front.length() > 15) fontSize = 36;
 
-    // Draw centered
+    // Draw centered within margins
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(fontSize / 24.0);
     M5.Display.setTextColor(TFT_BLACK);
 
     int textW = M5.Display.textWidth(front.c_str());
     int textX = (SCREEN_WIDTH - textW) / 2;
+
+    // Clamp to margins if text is too wide
+    if (textX < margin) textX = margin;
+
     int textY = contentY + (contentH - BUTTON_HEIGHT - 80) / 2;
 
     M5.Display.setCursor(textX, textY);
@@ -166,13 +172,15 @@ void SRSScreen::drawFront() {
 void SRSScreen::drawBack() {
     int availableHeight = SCREEN_HEIGHT - TAB_BAR_HEIGHT;
     int contentY = HEADER_HEIGHT + 20;
+    int margin = 40;  // Stronger margin for better readability
+    int contentWidth = SCREEN_WIDTH - margin * 2;
 
     // Card type indicator
     M5.Display.setFont(&fonts::efontKR_16);
     M5.Display.setTextColor(TFT_DARKGRAY);
     String typeText = (_currentCard->type == "word") ? "[단어]" : "[문형]";
     int typeW = M5.Display.textWidth(typeText.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - typeW, 15);
+    M5.Display.setCursor(SCREEN_WIDTH - margin - typeW, 15);
     M5.Display.print(typeText);
 
     // Front text (question)
@@ -182,27 +190,77 @@ void SRSScreen::drawBack() {
 
     String front = _currentCard->front;
     int frontW = M5.Display.textWidth(front.c_str());
-    M5.Display.setCursor((SCREEN_WIDTH - frontW) / 2, contentY);
+    int frontX = (SCREEN_WIDTH - frontW) / 2;
+    if (frontX < margin) frontX = margin;
+    M5.Display.setCursor(frontX, contentY);
     M5.Display.print(front);
 
     M5.Display.setTextSize(1.0);
     contentY += 60;
 
-    // Back text (answer) if available
+    // Back text (answer) with word wrapping
     if (_currentCard->back.length() > 0) {
         M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextColor(TFT_DARKGRAY);
+        M5.Display.setTextColor(TFT_BLACK);  // Use BLACK for better visibility
 
         String back = _currentCard->back;
-        int backW = M5.Display.textWidth(back.c_str());
-        M5.Display.setCursor((SCREEN_WIDTH - backW) / 2, contentY);
-        M5.Display.print(back);
+        int lineHeight = 32;
+        int totalWidth = M5.Display.textWidth(back.c_str());
 
-        contentY += 40;
+        // Word wrap if text is too long
+        if (totalWidth > contentWidth) {
+            // Split into multiple lines using binary search for efficiency
+            int pos = 0;
+            int len = back.length();
+
+            while (pos < len && contentY < availableHeight - BUTTON_HEIGHT - 80) {
+                // Binary search for line break point
+                int lo = pos, hi = len;
+                while (lo < hi) {
+                    int mid = (lo + hi + 1) / 2;
+                    // Ensure mid is at UTF-8 boundary
+                    while (mid < len && (back[mid] & 0xC0) == 0x80) mid++;
+
+                    String testLine = back.substring(pos, mid);
+                    if (M5.Display.textWidth(testLine.c_str()) <= contentWidth) {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
+                    }
+                }
+
+                int lineEnd = lo;
+                if (lineEnd == pos) {
+                    // At least one char - find next UTF-8 boundary
+                    lineEnd = pos + 1;
+                    while (lineEnd < len && (back[lineEnd] & 0xC0) == 0x80) lineEnd++;
+                }
+
+                String line = back.substring(pos, lineEnd);
+                int lineW = M5.Display.textWidth(line.c_str());
+                int lineX = (SCREEN_WIDTH - lineW) / 2;
+                if (lineX < margin) lineX = margin;
+
+                M5.Display.setCursor(lineX, contentY);
+                M5.Display.print(line);
+
+                contentY += lineHeight;
+                pos = lineEnd;
+            }
+        } else {
+            // Single line - center it
+            int backX = (SCREEN_WIDTH - totalWidth) / 2;
+            if (backX < margin) backX = margin;
+            M5.Display.setCursor(backX, contentY);
+            M5.Display.print(back);
+            contentY += lineHeight;
+        }
+
+        contentY += 10;
     }
 
     // Separator
-    M5.Display.drawLine(PAD_X + 50, contentY + 20, SCREEN_WIDTH - PAD_X - 50, contentY + 20, TFT_LIGHTGRAY);
+    M5.Display.drawLine(margin + 30, contentY + 10, SCREEN_WIDTH - margin - 30, contentY + 10, TFT_LIGHTGRAY);
 
     // Draw response buttons
     drawResponseButtons();
@@ -243,9 +301,9 @@ void SRSScreen::drawResponseButtons() {
         M5.Display.setCursor(btnX + (BUTTON_WIDTH - labelW) / 2, btnY + 10);
         M5.Display.print(buttons[i].label);
 
-        // Interval text
+        // Interval text - use BLACK for better visibility
         M5.Display.setFont(&fonts::efontKR_16);
-        M5.Display.setTextColor(TFT_DARKGRAY);
+        M5.Display.setTextColor(TFT_BLACK);
         String interval = getIntervalText(buttons[i].response);
         int intervalW = M5.Display.textWidth(interval.c_str());
         M5.Display.setCursor(btnX + (BUTTON_WIDTH - intervalW) / 2, btnY + 35);

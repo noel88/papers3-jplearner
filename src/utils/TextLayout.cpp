@@ -254,28 +254,43 @@ void TextLayout::setRangeSelection(const WordInfo& start, const WordInfo& end) {
 String TextLayout::extractTextInRange(const LineInfo& line, int startX, int endX) {
     // Extract text from line between startX and endX
     String result;
-    int charX = line.x;
     int bytePos = 0;
     int startByte = -1;
     int endByte = line.text.length();
 
+    // Calculate cumulative width to find characters in range
+    FontManager& fm = FontManager::instance();
+    bool useCustomFont = fm.hasCustomFont();
+
     while (bytePos < (int)line.text.length()) {
-        // Get character width
+        // Get character length
         int charLen = 1;
         uint8_t c = line.text[bytePos];
         if (c >= 0xF0) charLen = 4;
         else if (c >= 0xE0) charLen = 3;
         else if (c >= 0xC0) charLen = 2;
 
-        String sub = line.text.substring(0, bytePos + charLen);
-        int nextX = line.x + M5.Display.textWidth(sub.c_str());
+        // Calculate cumulative position up to this character
+        String upToHere = line.text.substring(0, bytePos);
+        String upToNext = line.text.substring(0, bytePos + charLen);
+
+        int currentX = line.x;
+        int nextX = line.x;
+
+        if (useCustomFont) {
+            currentX += fm.getTextWidth(upToHere);
+            nextX += fm.getTextWidth(upToNext);
+        } else {
+            currentX += M5.Display.textWidth(upToHere.c_str());
+            nextX += M5.Display.textWidth(upToNext.c_str());
+        }
 
         // Check if this character is in range
         if (startByte < 0 && nextX > startX) {
             startByte = bytePos;
         }
-        if (nextX >= endX) {
-            endByte = bytePos + charLen;
+        if (currentX >= endX) {
+            endByte = bytePos;
             break;
         }
 
@@ -314,11 +329,12 @@ void TextLayout::drawHighlight() {
     FontManager& fm = FontManager::instance();
     bool useCustomFont = fm.hasCustomFont();
 
-    int padding = 2;
+    constexpr int padding = 2;
+    constexpr int typicalLineHeight = 40;  // Single line is ~32px
     int selEndY = _selection.y + _selection.height;
 
     // Check if single line selection (height matches typical line height)
-    bool isSingleLine = (_selection.height <= 40);  // Single line is ~32px
+    bool isSingleLine = (_selection.height <= typicalLineHeight);
 
     if (isSingleLine) {
         // Simple single-word/single-line highlight
@@ -330,15 +346,17 @@ void TextLayout::drawHighlight() {
             TFT_BLACK
         );
 
-        // Draw white text on black background (highlight)
-        // Note: LovyanGFX doesn't support white text rendering for custom fonts
-        // so we use built-in font for highlights
-        M5.Display.setTextColor(TFT_WHITE);
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        M5.Display.setCursor(_selection.x, _selection.y);
-        M5.Display.print(_selection.text);
-        M5.Display.setTextColor(TFT_BLACK);
+        // Draw white text on black background using configured font
+        if (useCustomFont) {
+            fm.drawStringWithColor(_selection.text, _selection.x, _selection.y, TFT_WHITE);
+        } else {
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setFont(&fonts::efontJA_24);
+            M5.Display.setTextSize(1.0);
+            M5.Display.setCursor(_selection.x, _selection.y);
+            M5.Display.print(_selection.text);
+            M5.Display.setTextColor(TFT_BLACK);
+        }
         return;
     }
 
@@ -378,14 +396,19 @@ void TextLayout::drawHighlight() {
 
         M5.Display.fillRect(hlX - padding, lineY - 2, hlW + padding * 2, line.height, TFT_BLACK);
 
-        // Draw white text on black background
-        M5.Display.setTextColor(TFT_WHITE);
-        M5.Display.setFont(&fonts::efontJA_24);
-        M5.Display.setTextSize(1.0);
-        M5.Display.setCursor(hlX, lineY);
-        M5.Display.print(hlText);
+        // Draw white text on black background using configured font
+        if (useCustomFont) {
+            fm.drawStringWithColor(hlText, hlX, lineY, TFT_WHITE);
+        } else {
+            M5.Display.setTextColor(TFT_WHITE);
+            M5.Display.setFont(&fonts::efontJA_24);
+            M5.Display.setTextSize(1.0);
+            M5.Display.setCursor(hlX, lineY);
+            M5.Display.print(hlText);
+        }
     }
 
+    // Reset text color to default
     M5.Display.setTextColor(TFT_BLACK);
 }
 

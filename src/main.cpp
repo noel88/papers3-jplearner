@@ -711,10 +711,13 @@ void refreshDisplay() {
         }
 
         // Use fast mode for normal updates (less flicker)
+        // Wrap all drawing in startWrite/endWrite to ensure tab bar is included
         M5.Display.setEpdMode(epd_mode_t::epd_fast);
+        M5.Display.startWrite();
         M5.Display.fillScreen(TFT_WHITE);
         ScreenManager::instance().draw();
         drawTabBar();
+        M5.Display.endWrite();
         M5.Display.display();
         M5.Display.waitDisplay();
         needsFullRedraw = false;
@@ -722,7 +725,9 @@ void refreshDisplay() {
     } else if (needsTabRedraw) {
         // Tab-only update - fastest mode
         M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+        M5.Display.startWrite();
         drawTabBar();
+        M5.Display.endWrite();
         M5.Display.display();
         M5.Display.waitDisplay();
         needsTabRedraw = false;
@@ -738,9 +743,13 @@ static size_t g_fontBufferSize = 0;
 
 void setup() {
     // === CRITICAL: Reserve PSRAM for font BEFORE M5.begin() fragments it ===
-    // Allocate 6MB buffer for font (will be used by FontManager later)
-    g_fontBufferSize = 6 * 1024 * 1024;  // 6MB
+    // Allocate 6MB buffer for font (dictionary uses SD-card direct search, no PSRAM needed)
+    g_fontBufferSize = 6 * 1024 * 1024;  // 6MB for fonts
+
     g_fontBuffer = (uint8_t*)heap_caps_malloc(g_fontBufferSize, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    // We can't use Serial yet (before M5.begin), but we can store the values
+    // and print them after Serial is initialized
 
     auto cfg = M5.config();
     cfg.clear_display = false;  // We handle clear in refreshDisplay()
@@ -755,10 +764,17 @@ void setup() {
     }
 
     Serial.println("\n\n=== Papers3 JP Learner Starting ===");
-    Serial.printf("Pre-allocated font buffer: %p (%d bytes)\n", g_fontBuffer, g_fontBufferSize);
-    Serial.printf("PSRAM after M5.begin: Total=%d, Free=%d, Largest=%d\n",
+    Serial.printf("Font buffer allocation: %s at %p (%d bytes)\n",
+                  g_fontBuffer ? "SUCCESS" : "FAILED", g_fontBuffer, g_fontBufferSize);
+    Serial.printf("PSRAM Status: Total=%d, Free=%d, LargestBlock=%d\n",
                   ESP.getPsramSize(), ESP.getFreePsram(),
                   heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+
+    // Verify buffer is in PSRAM
+    if (g_fontBuffer) {
+        bool inPsram = heap_caps_check_integrity_addr((intptr_t)g_fontBuffer, false);
+        Serial.printf("Font buffer in PSRAM: %s\n", inPsram ? "YES" : "UNKNOWN");
+    }
     Serial.flush();
 
     // Configure display
@@ -789,20 +805,41 @@ void setup() {
 
     // Initialize FontManager with pre-allocated buffer
     FontManager& fm = FontManager::instance();
+    Serial.println("=== FontManager Setup ===");
+    Serial.printf("Pre-allocated buffer: %p (%d bytes, %.1f MB)\n",
+                  g_fontBuffer, g_fontBufferSize, g_fontBufferSize / 1048576.0f);
     if (g_fontBuffer != nullptr) {
         fm.setExternalBuffer(g_fontBuffer, g_fontBufferSize);
+        Serial.println("External buffer registered with FontManager");
+    } else {
+        Serial.println("WARNING: No external buffer available for FontManager!");
     }
+    Serial.flush();
     fm.init();
 
     // Load configured font
+    Serial.println("=== Font Configuration ===");
+    Serial.printf("config.primaryFont: '%s' (len=%d)\n",
+                  config.primaryFont.c_str(), config.primaryFont.length());
+    Serial.printf("Available fonts from scan: %d\n", fm.getAvailableFonts().size());
+    for (const auto& f : fm.getAvailableFonts()) {
+        Serial.printf("  - %s (%d bytes)\n", f.filename.c_str(), f.fileSize);
+    }
+    Serial.flush();
+
     if (config.primaryFont.length() > 0) {
-        Serial.printf("Loading font: %s\n", config.primaryFont.c_str());
+        Serial.printf("Loading primary font: %s\n", config.primaryFont.c_str());
         Serial.flush();
         bool loaded = fm.setPrimaryFont(config.primaryFont);
-        Serial.printf("Font load result: %d, hasCustomFont: %d\n", loaded, fm.hasCustomFont());
+        Serial.printf("Primary font load: %s (hasCustomFont=%d, lastError=%d)\n",
+                      loaded ? "SUCCESS" : "FAILED", fm.hasCustomFont(), fm.getLastError());
         Serial.flush();
+    } else {
+        Serial.println("No primary font configured, using built-in font");
     }
+
     if (config.fallbackFont.length() > 0) {
+        Serial.printf("Loading fallback font: %s\n", config.fallbackFont.c_str());
         fm.setFallbackFont(config.fallbackFont);
     }
 

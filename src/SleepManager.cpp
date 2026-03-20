@@ -46,11 +46,24 @@ void SleepManager::enterSleep() {
     // Configure touch wakeup (M5Paper S3 uses GPIO21 for touch interrupt)
     esp_sleep_enable_ext0_wakeup(GPIO_NUM_21, 0);
 
-    // Enter light sleep
-    delay(50);
-    esp_light_sleep_start();
+    // Enter light sleep loop - stay asleep until real touch detected
+    while (true) {
+        esp_light_sleep_start();
 
-    // --- Execution resumes here after wakeup ---
+        // --- Execution resumes here after wakeup ---
+        // Give touch controller time to stabilize before checking
+        delay(50);
+        M5.update();
+
+        auto touch = M5.Touch.getDetail();
+        if (touch.wasPressed() || touch.isPressed()) {
+            // Real touch detected - wake up
+            break;
+        }
+
+        // False wakeup (noise) - go back to sleep
+    }
+
     wakeUp();
 }
 

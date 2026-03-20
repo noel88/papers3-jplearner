@@ -7,8 +7,7 @@
  * PopupMenu - Action menu for text selection
  *
  * Shows a popup menu with actions:
- * - 검색 (Search) - Dictionary lookup (Phase 4)
- * - 저장 (Save) - Add to vocabulary
+ * - 저장 (Save) - Add to vocabulary (with dictionary lookup)
  * - 문형 (Grammar) - Add to grammar patterns
  */
 
@@ -52,7 +51,7 @@ private:
     String _selectedText;
 
     // Button layout
-    static constexpr int BUTTON_COUNT = 3;
+    static constexpr int BUTTON_COUNT = 2;
     static constexpr int BUTTON_WIDTH = 60;
     static constexpr int BUTTON_HEIGHT = 36;
     static constexpr int BUTTON_SPACING = 8;

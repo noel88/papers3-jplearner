@@ -228,14 +228,16 @@ void ReadScreen::drawBookSelection() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(UI::SIZE_TITLE);
     M5.Display.setTextColor(TFT_BLACK);
-    UI::drawBoldText("책 선택", PAD_X, 15);
+    int fontH = M5.Display.fontHeight();
+    int headerY = (HEADER_HEIGHT - fontH) / 2;
+    UI::drawBoldText("책 선택", PAD_X, headerY);
 
     // Book count (bold)
     M5.Display.setTextColor(TFT_DARKGRAY);
     M5.Display.setTextSize(UI::SIZE_CONTENT);
     String countStr = String(_books.size()) + "권";
     int countW = M5.Display.textWidth(countStr.c_str());
-    UI::drawBoldText(countStr.c_str(), SCREEN_WIDTH - PAD_X - countW, 15);
+    UI::drawBoldText(countStr.c_str(), SCREEN_WIDTH - PAD_X - countW, headerY);
 
     // Separator
     M5.Display.drawLine(PAD_X, HEADER_HEIGHT - 1, SCREEN_WIDTH - PAD_X, HEADER_HEIGHT - 1, TFT_BLACK);
@@ -408,20 +410,23 @@ void ReadScreen::drawReadingHeader() {
     M5.Display.setTextSize(1.0);
     M5.Display.setTextColor(TFT_BLACK);
 
+    int fontH = M5.Display.fontHeight();
+    int headerY = (HEADER_HEIGHT - fontH) / 2;
+
     // Back button (left)
-    M5.Display.setCursor(PAD_X, 15);
+    M5.Display.setCursor(PAD_X, headerY);
     M5.Display.print("< 목록");
 
     // TOC button (right side, before chapter nav)
     String tocBtn = "목차";
     int tocW = M5.Display.textWidth(tocBtn.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - 150, 15);
+    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - 150, headerY);
     M5.Display.print(tocBtn);
 
     // Chapter navigation (far right)
     String chapterNav = String(_currentChapter + 1) + "/" + String(_epubParser.getChapterCount());
     int navW = M5.Display.textWidth(chapterNav.c_str());
-    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - navW, 15);
+    M5.Display.setCursor(SCREEN_WIDTH - PAD_X - navW, headerY);
     M5.Display.print(chapterNav);
 
     // Chapter title (center)
@@ -439,7 +444,7 @@ void ReadScreen::drawReadingHeader() {
         }
 
         int titleW = M5.Display.textWidth(chapterTitle.c_str());
-        M5.Display.setCursor((SCREEN_WIDTH - titleW) / 2, 15);
+        M5.Display.setCursor((SCREEN_WIDTH - titleW) / 2, headerY);
         M5.Display.print(chapterTitle);
     }
 
@@ -464,7 +469,8 @@ void ReadScreen::drawReadingNavigation() {
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(UI::SIZE_CONTENT);
 
-    int buttonY = navY + (NAV_HEIGHT - 30) / 2;
+    int fontH = M5.Display.fontHeight();
+    int buttonY = navY + (NAV_HEIGHT - fontH) / 2;
 
     // Previous page/chapter (bold)
     bool canGoPrev = _currentPage > 0 || _currentChapter > 0;
@@ -614,6 +620,11 @@ void ReadScreen::handleWordSelection(int x, int y) {
 }
 
 void ReadScreen::handlePopupAction(PopupMenu::Action action) {
+    // Handle NONE case (touch inside popup but not on button)
+    if (action == PopupMenu::NONE) {
+        return;  // Do nothing, keep popup open
+    }
+
     String selectedText = _popupMenu.getSelectedText();
 
     // Use helper to handle action
@@ -703,10 +714,10 @@ bool ReadScreen::handleTouchMove(int x, int y) {
             // Update range selection
             _textLayout.setRangeSelection(_dragStartWord, dragEndWord);
 
-            // Redraw only highlight - partial update
+            // Must redraw full content to clear old highlight
             M5.Display.setEpdMode(epd_mode_t::epd_fastest);
             M5.Display.startWrite();
-            _textLayout.drawHighlight();
+            drawReadingContent();
             M5.Display.endWrite();
         }
         return true;

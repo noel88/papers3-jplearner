@@ -38,7 +38,8 @@ void ContentRenderer::renderPage(
     }
     M5.Display.setTextColor(TFT_BLACK);
 
-    int maxY = availableHeight - _config.navHeight - _config.padY;
+    // Calculate max Y position (ensure last line doesn't overlap navigation)
+    int maxY = availableHeight - _config.navHeight - _config.padY - fontH - _config.lineSpacing;
 
     int startPara = pageBreaks[currentPage];
     int endPara = (currentPage + 1 < totalPages) ? pageBreaks[currentPage + 1] : paragraphs.size();
@@ -114,7 +115,8 @@ int ContentRenderer::calculatePages(
     }
 
     int availableHeight = SCREEN_HEIGHT - _config.tabBarHeight;
-    int contentH = availableHeight - _config.headerHeight - _config.navHeight - _config.padY * 2;
+    // Account for header, navigation, padding, and line height
+    int contentH = availableHeight - _config.headerHeight - _config.navHeight - _config.padY * 2 - fontH - _config.lineSpacing;
 
     pageBreaks.push_back(0);
     int y = 0;

@@ -205,8 +205,8 @@ void SettingsScreen::drawWiFiSTASettings() {
     int y = ITEMS_START_Y + 10;
 
     // Current Station settings (bold)
-    UI::drawBoldText("외부 WiFi 연결:", PAD_X, y);
-    y += 40;
+    UI::drawBoldText("NTP 동기화용 WiFi:", PAD_X, y);
+    y += 45;
 
     if (config.staSsid.length() > 0) {
         char ssidBuf[64];
@@ -214,34 +214,52 @@ void SettingsScreen::drawWiFiSTASettings() {
         UI::drawBoldText(ssidBuf, PAD_X + 20, y);
         y += 35;
 
-        UI::drawBoldText("상태: 설정됨", PAD_X + 20, y);
+        // Password (masked)
+        String maskedPw = "";
+        for (int i = 0; i < config.staPassword.length() && i < 12; i++) {
+            maskedPw += "*";
+        }
+        char pwBuf[64];
+        snprintf(pwBuf, sizeof(pwBuf), "Password: %s", maskedPw.c_str());
+        M5.Display.setTextSize(UI::SIZE_BODY);
+        UI::drawBoldText(pwBuf, PAD_X + 20, y);
+        y += 40;
+
+        M5.Display.setTextSize(UI::SIZE_CONTENT);
+        M5.Display.setTextColor(TFT_DARKGREEN);
+        UI::drawBoldText("✓ 설정됨", PAD_X + 20, y);
+        M5.Display.setTextColor(TFT_BLACK);
     } else {
+        M5.Display.setTextColor(0xFD20);  // Orange
         UI::drawBoldText("설정된 네트워크 없음", PAD_X + 20, y);
+        M5.Display.setTextColor(TFT_BLACK);
     }
-    y += 50;
+    y += 60;
 
-    // Scan button
-    int btnY = y + 20;
-    int btnW = 250;
-    int btnH = 50;
-    int btnX = (SCREEN_WIDTH - btnW) / 2;
+    // Instructions
+    M5.Display.setFont(&fonts::efontKR_24);
+    M5.Display.setTextSize(UI::SIZE_BODY);
+    UI::drawBoldText("WiFi 설정 방법:", PAD_X, y);
+    y += 35;
 
-    M5.Display.drawRect(btnX, btnY, btnW, btnH, TFT_BLACK);
-    M5.Display.setTextSize(UI::SIZE_CONTENT);
-
-    int textW = M5.Display.textWidth("WiFi 스캔");
-    UI::drawBoldText("WiFi 스캔", btnX + (btnW - textW) / 2, btnY + 12);
-
-    M5.Display.setTextSize(1.0);
-
-    // Note
-    y = btnY + btnH + 40;
     M5.Display.setFont(&fonts::Font2);
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("Note: WiFi scan feature coming soon.");
-    y += 25;
-    M5.Display.setCursor(PAD_X, y);
-    M5.Display.print("Currently use AP mode for file transfer.");
+    M5.Display.setCursor(PAD_X + 10, y);
+    M5.Display.print("1. Settings > WiFi File Transfer");
+    y += 22;
+    M5.Display.setCursor(PAD_X + 10, y);
+    M5.Display.print("2. Connect phone/PC to Papers3 WiFi");
+    y += 22;
+    M5.Display.setCursor(PAD_X + 10, y);
+    M5.Display.print("3. Open http://192.168.4.1 in browser");
+    y += 22;
+    M5.Display.setCursor(PAD_X + 10, y);
+    M5.Display.print("4. Enter WiFi credentials in 'WiFi Settings'");
+
+    // Help text at bottom
+    M5.Display.setTextColor(0x8410);
+    M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 25);
+    M5.Display.print("After setting WiFi, use System Settings > NTP Sync");
+    M5.Display.setTextColor(TFT_BLACK);
 
     M5.Display.setFont(&fonts::efontKR_24);
 }

@@ -166,8 +166,9 @@ const char WEB_UI_HTML[] PROGMEM = R"rawliteral(
             <button onclick="saveApSettings()" style="background:#17a2b8;">Save AP Settings</button>
         </div>
         <div style="margin-top:20px;">
-            <label><strong>External WiFi (for future sync)</strong></label>
-            <input type="text" id="staSsid" placeholder="WiFi SSID" style="width:100%;padding:8px;margin:5px 0;">
+            <label><strong>External WiFi (NTP Time Sync)</strong></label>
+            <p style="font-size:12px;color:#666;margin:5px 0;">NTP 시간 동기화에 사용됩니다. 인터넷 연결 가능한 WiFi를 입력하세요.</p>
+            <input type="text" id="staSsid" placeholder="WiFi SSID (예: home_wifi)" style="width:100%;padding:8px;margin:5px 0;">
             <input type="password" id="staPass" placeholder="WiFi Password" style="width:100%;padding:8px;margin:5px 0;">
             <button onclick="saveStaSettings()" style="background:#17a2b8;">Save WiFi Settings</button>
         </div>

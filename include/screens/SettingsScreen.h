@@ -8,6 +8,9 @@ struct Config;
 extern Config config;
 extern bool saveConfig();
 
+// NTP sync function (defined in main.cpp)
+extern bool connectWiFiAndSyncTime();
+
 /**
  * Settings menu states (State Pattern)
  */

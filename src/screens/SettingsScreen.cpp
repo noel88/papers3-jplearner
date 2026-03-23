@@ -381,20 +381,31 @@ void SettingsScreen::drawSystemSettings() {
 
     y += 80;
 
-    // Save button
-    int saveBtnW = 200;
-    int saveBtnH = 45;
-    int saveBtnX = (SCREEN_WIDTH - saveBtnW) / 2;
+    // Buttons row: Save (left) and NTP Sync (right)
+    int timeBtnW = 180;
+    int timeBtnH = 45;
+    int timeBtnGap = 30;
+    int totalBtnW = timeBtnW * 2 + timeBtnGap;
+    int startBtnX = (SCREEN_WIDTH - totalBtnW) / 2;
 
-    M5.Display.fillRect(saveBtnX, y, saveBtnW, saveBtnH, TFT_BLACK);
+    // Save button (left)
+    M5.Display.fillRect(startBtnX, y, timeBtnW, timeBtnH, TFT_BLACK);
     M5.Display.setTextColor(TFT_WHITE);
     M5.Display.setFont(&fonts::efontKR_24);
     M5.Display.setTextSize(UI::SIZE_CONTENT);
     int saveTextW = M5.Display.textWidth("시간 저장");
-    UI::drawBoldText("시간 저장", saveBtnX + (saveBtnW - saveTextW) / 2, y + 10);
+    UI::drawBoldText("시간 저장", startBtnX + (timeBtnW - saveTextW) / 2, y + 10);
+
+    // NTP Sync button (right)
+    int ntpBtnX = startBtnX + timeBtnW + timeBtnGap;
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.drawRect(ntpBtnX, y, timeBtnW, timeBtnH, TFT_BLACK);
+    int ntpTextW = M5.Display.textWidth("NTP 동기화");
+    UI::drawBoldText("NTP 동기화", ntpBtnX + (timeBtnW - ntpTextW) / 2, y + 10);
+
     M5.Display.setTextColor(TFT_BLACK);
 
-    y += saveBtnH + 20;
+    y += timeBtnH + 15;
 
     // Current time display
     M5.Display.setFont(&fonts::Font2);
@@ -405,10 +416,21 @@ void SettingsScreen::drawSystemSettings() {
              dt.time.hours, dt.time.minutes, dt.time.seconds);
     M5.Display.print(currentBuf);
 
+    // WiFi info for NTP
+    y += 20;
+    M5.Display.setCursor(PAD_X, y);
+    if (config.staSsid.length() > 0) {
+        M5.Display.printf("NTP WiFi: %s", config.staSsid.c_str());
+    } else {
+        M5.Display.setTextColor(0xFD20);  // Orange warning
+        M5.Display.print("NTP: WiFi not configured (Settings > WiFi)");
+        M5.Display.setTextColor(TFT_BLACK);
+    }
+
     // Help text
     M5.Display.setTextColor(0x8410);
     M5.Display.setCursor(PAD_X, CONTENT_HEIGHT - 25);
-    M5.Display.print("Adjust date/time and tap 'Save' to apply.");
+    M5.Display.print("Manual: adjust & save | NTP: auto sync via WiFi");
     M5.Display.setTextColor(TFT_BLACK);
 
     M5.Display.setFont(&fonts::efontKR_24);
@@ -1131,30 +1153,76 @@ bool SettingsScreen::handleSystemSettingsTouch(int x, int y) {
         }
     }
 
-    // Save button
-    int saveY = timeY + 80;
-    int saveBtnW = 200;
-    int saveBtnH = 45;
-    int saveBtnX = (SCREEN_WIDTH - saveBtnW) / 2;
+    // Buttons row: Save (left) and NTP Sync (right)
+    int timeBtnY = timeY + 80;
+    int timeBtnW = 180;
+    int timeBtnH = 45;
+    int timeBtnGap = 30;
+    int totalTimeBtnW = timeBtnW * 2 + timeBtnGap;
+    int startBtnX = (SCREEN_WIDTH - totalTimeBtnW) / 2;
+    int ntpBtnX = startBtnX + timeBtnW + timeBtnGap;
 
-    if (y >= saveY && y <= saveY + saveBtnH &&
-        x >= saveBtnX && x <= saveBtnX + saveBtnW) {
-        // Save to RTC
-        m5::rtc_datetime_t dt;
-        dt.date.year = _adjYear;
-        dt.date.month = _adjMonth;
-        dt.date.date = _adjDay;
-        dt.time.hours = _adjHour;
-        dt.time.minutes = _adjMinute;
-        dt.time.seconds = 0;
+    if (y >= timeBtnY && y <= timeBtnY + timeBtnH) {
+        // Save button (left)
+        if (x >= startBtnX && x <= startBtnX + timeBtnW) {
+            // Save to RTC
+            m5::rtc_datetime_t dt;
+            dt.date.year = _adjYear;
+            dt.date.month = _adjMonth;
+            dt.date.date = _adjDay;
+            dt.time.hours = _adjHour;
+            dt.time.minutes = _adjMinute;
+            dt.time.seconds = 0;
 
-        M5.Rtc.setDateTime(dt);
-        Serial.printf("RTC set to: %04d-%02d-%02d %02d:%02d:00\n",
-                      _adjYear, _adjMonth, _adjDay, _adjHour, _adjMinute);
+            M5.Rtc.setDateTime(dt);
+            Serial.printf("RTC set to: %04d-%02d-%02d %02d:%02d:00\n",
+                          _adjYear, _adjMonth, _adjDay, _adjHour, _adjMinute);
 
-        _timeAdjustInitialized = false;  // Re-read from RTC next time
-        requestRedraw();
-        return true;
+            _timeAdjustInitialized = false;  // Re-read from RTC next time
+            requestRedraw();
+            return true;
+        }
+
+        // NTP Sync button (right)
+        if (x >= ntpBtnX && x <= ntpBtnX + timeBtnW) {
+            Serial.println("NTP sync button pressed");
+
+            // Show syncing message
+            M5.Display.setEpdMode(epd_mode_t::epd_fast);
+            M5.Display.fillRect(0, CONTENT_HEIGHT / 2 - 30, SCREEN_WIDTH, 60, TFT_WHITE);
+            M5.Display.setFont(&fonts::efontKR_24);
+            M5.Display.setTextSize(UI::SIZE_CONTENT);
+            M5.Display.setTextColor(TFT_BLACK);
+            UI::drawBoldTextCentered("NTP 동기화 중...", CONTENT_HEIGHT / 2 - 15);
+            M5.Display.display();
+            M5.Display.waitDisplay();
+
+            // Perform NTP sync
+            bool success = connectWiFiAndSyncTime();
+
+            // Show result
+            M5.Display.fillRect(0, CONTENT_HEIGHT / 2 - 30, SCREEN_WIDTH, 60, TFT_WHITE);
+            if (success) {
+                M5.Display.setTextColor(TFT_DARKGREEN);
+                UI::drawBoldTextCentered("동기화 완료!", CONTENT_HEIGHT / 2 - 15);
+            } else {
+                M5.Display.setTextColor(TFT_RED);
+                if (config.staSsid.length() == 0) {
+                    UI::drawBoldTextCentered("WiFi 설정 필요", CONTENT_HEIGHT / 2 - 15);
+                } else {
+                    UI::drawBoldTextCentered("동기화 실패", CONTENT_HEIGHT / 2 - 15);
+                }
+            }
+            M5.Display.setTextColor(TFT_BLACK);
+            M5.Display.display();
+            M5.Display.waitDisplay();
+
+            delay(1500);  // Show result briefly
+
+            _timeAdjustInitialized = false;  // Re-read from RTC
+            requestRedraw();
+            return true;
+        }
     }
 
     return false;

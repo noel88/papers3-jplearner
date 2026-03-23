@@ -7,6 +7,8 @@
 #include <ESPAsyncWebServer.h>
 #include <ArduinoJson.h>
 #include "esp_heap_caps.h"
+#include "esp_sntp.h"
+#include <time.h>
 
 // Screen architecture includes
 #include "screens/ScreenManager.h"
@@ -512,6 +514,132 @@ void setupWebServer() {
     );
 
     server.begin();
+}
+
+// ============================================
+// NTP Time Synchronization
+// ============================================
+// NTP servers to try
+const char* NTP_SERVER1 = "pool.ntp.org";
+const char* NTP_SERVER2 = "time.google.com";
+const char* NTP_SERVER3 = "time.cloudflare.com";
+
+// Timezone for Korea (UTC+9)
+const long GMT_OFFSET_SEC = 9 * 3600;
+const int DAYLIGHT_OFFSET_SEC = 0;
+
+bool ntpSyncInProgress = false;
+bool ntpSyncSuccess = false;
+
+/**
+ * Synchronize time from NTP server and update RTC
+ * Returns true if successful
+ */
+bool syncTimeFromNTP() {
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("NTP: WiFi not connected");
+        return false;
+    }
+
+    Serial.println("NTP: Starting time synchronization...");
+    ntpSyncInProgress = true;
+    ntpSyncSuccess = false;
+
+    // Configure SNTP
+    esp_sntp_setoperatingmode(ESP_SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, NTP_SERVER1);
+    esp_sntp_setservername(1, NTP_SERVER2);
+    esp_sntp_setservername(2, NTP_SERVER3);
+    esp_sntp_init();
+
+    // Wait for time sync (max 10 seconds)
+    int retry = 0;
+    const int maxRetries = 20;
+    while (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && retry < maxRetries) {
+        Serial.printf("NTP: Waiting for sync... (%d/%d)\n", retry + 1, maxRetries);
+        delay(500);
+        retry++;
+    }
+
+    if (retry >= maxRetries) {
+        Serial.println("NTP: Sync timeout");
+        esp_sntp_stop();
+        ntpSyncInProgress = false;
+        return false;
+    }
+
+    // Get the synced time
+    time_t now;
+    struct tm timeinfo;
+    time(&now);
+
+    // Apply timezone offset
+    now += GMT_OFFSET_SEC;
+    gmtime_r(&now, &timeinfo);
+
+    // Update M5 RTC
+    m5::rtc_datetime_t dt;
+    dt.date.year = timeinfo.tm_year + 1900;
+    dt.date.month = timeinfo.tm_mon + 1;
+    dt.date.date = timeinfo.tm_mday;
+    dt.time.hours = timeinfo.tm_hour;
+    dt.time.minutes = timeinfo.tm_min;
+    dt.time.seconds = timeinfo.tm_sec;
+
+    M5.Rtc.setDateTime(dt);
+
+    Serial.printf("NTP: RTC updated to %04d-%02d-%02d %02d:%02d:%02d (KST)\n",
+                  dt.date.year, dt.date.month, dt.date.date,
+                  dt.time.hours, dt.time.minutes, dt.time.seconds);
+
+    esp_sntp_stop();
+    ntpSyncInProgress = false;
+    ntpSyncSuccess = true;
+    return true;
+}
+
+/**
+ * Connect to external WiFi (STA mode) and sync time
+ * Returns true if connection and sync successful
+ */
+bool connectWiFiAndSyncTime() {
+    if (config.staSsid.length() == 0) {
+        Serial.println("NTP: No WiFi credentials configured");
+        return false;
+    }
+
+    Serial.printf("NTP: Connecting to %s...\n", config.staSsid.c_str());
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(config.staSsid.c_str(), config.staPassword.c_str());
+
+    // Wait for connection (max 15 seconds)
+    int retry = 0;
+    while (WiFi.status() != WL_CONNECTED && retry < 30) {
+        delay(500);
+        Serial.print(".");
+        retry++;
+    }
+    Serial.println();
+
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("NTP: WiFi connection failed");
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        return false;
+    }
+
+    Serial.printf("NTP: Connected! IP: %s\n", WiFi.localIP().toString().c_str());
+
+    // Sync time
+    bool success = syncTimeFromNTP();
+
+    // Disconnect after sync
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_OFF);
+    Serial.println("NTP: WiFi disconnected");
+
+    return success;
 }
 
 void startWiFiMode() {

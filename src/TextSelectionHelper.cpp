@@ -38,6 +38,32 @@ bool TextSelectionHelper::handleDictionaryTouch() {
     return false;
 }
 
+void TextSelectionHelper::showProgressIndicator(const char* message) {
+    Serial.printf("TextSelectionHelper: showProgressIndicator('%s')\n", message);
+
+    int toastW = 200;
+    int toastH = 50;
+    int toastX = (SCREEN_WIDTH - toastW) / 2;
+    int toastY = (SCREEN_HEIGHT - 60 - toastH) / 2;
+
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+    M5.Display.startWrite();
+
+    // Draw progress indicator background
+    M5.Display.fillRect(toastX, toastY, toastW, toastH, TFT_WHITE);
+    M5.Display.drawRect(toastX, toastY, toastW, toastH, TFT_BLACK);
+    M5.Display.drawRect(toastX + 1, toastY + 1, toastW - 2, toastH - 2, TFT_BLACK);
+
+    // Draw message centered
+    M5.Display.setFont(&fonts::efontKR_16);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextDatum(MC_DATUM);
+    M5.Display.drawString(message, toastX + toastW / 2, toastY + toastH / 2);
+
+    M5.Display.endWrite();
+    // No delay - returns immediately so caller can continue processing
+}
+
 void TextSelectionHelper::showToast(const char* message, std::function<void()> onRedraw) {
     Serial.printf("TextSelectionHelper: showToast('%s')\n", message);
 
@@ -84,6 +110,9 @@ bool TextSelectionHelper::saveToVocabulary(const String& word) {
         return false;
     }
 
+    // Show progress indicator before slow operations
+    showProgressIndicator("저장 중...");
+
     // Look up dictionary for meaning/reading (can be slow on SD card)
     Serial.println("TextSelectionHelper: Looking up dictionary...");
     String extra = "";
@@ -107,27 +136,62 @@ bool TextSelectionHelper::saveToVocabulary(const String& word) {
 }
 
 bool TextSelectionHelper::saveToGrammar(const String& text) {
+    Serial.printf("TextSelectionHelper: saveToGrammar('%s')\n", text.c_str());
+
+    // Show progress indicator before processing
+    showProgressIndicator("저장 중...");
+
     SRSManager& srs = SRSManager::instance();
+    GrammarManager& grammar = GrammarManager::instance();
+
+    // Detect grammar pattern from text
+    GrammarItem* pattern = grammar.detectPattern(text);
+
+    String frontText;
+    String backText;
+
+    if (pattern) {
+        // Pattern found - use pattern info
+        frontText = pattern->pattern;
+
+        // Format back text for display
+        // Format: [LEVEL] meaning
+        //         例: example (exampleEn)
+        backText = "[" + pattern->level + "] " + pattern->meaning;
+        if (pattern->example.length() > 0) {
+            backText += "\n\n例: " + pattern->example;
+            if (pattern->exampleEn.length() > 0) {
+                backText += "\n(" + pattern->exampleEn + ")";
+            }
+        }
+    } else {
+        // No pattern found - save selected text as-is
+        frontText = text;
+        backText = "";  // No meaning available
+        Serial.println("TextSelectionHelper: No pattern found, saving text as-is");
+    }
 
     // Check if already saved
-    if (srs.hasCard(text, "grammar")) {
+    if (srs.hasCard(frontText, "grammar")) {
         showToast("이미 저장됨", _redrawCallback);
         return false;
     }
 
-    // Try dictionary lookup for grammar patterns too
-    String extra = "";
-    DictionaryManager& dict = DictionaryManager::instance();
-    if (dict.isAvailable()) {
-        DictEntry entry = dict.lookupWord(text);
-        if (!entry.word.isEmpty()) {
-            extra = entry.reading + "|" + entry.meanings + "|" + entry.partOfSpeech;
+    // Add as SRS card
+    String cardId = srs.addCard("grammar", frontText, backText);
+
+    if (cardId.length() > 0) {
+        if (pattern) {
+            Serial.printf("TextSelectionHelper: Grammar saved - %s (%s)\n",
+                          frontText.c_str(), pattern->level.c_str());
+        } else {
+            Serial.printf("TextSelectionHelper: Grammar saved (no pattern) - %s\n",
+                          frontText.c_str());
         }
+        return true;
     }
 
-    // Add as SRS card
-    String cardId = srs.addCard("grammar", text, extra);
-    return cardId.length() > 0;
+    return false;
 }
 
 void TextSelectionHelper::showDictionaryPopup(const String& word) {

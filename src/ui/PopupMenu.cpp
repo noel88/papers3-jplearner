@@ -93,7 +93,7 @@ void PopupMenu::getButtonBounds(int index, int& x, int& y, int& w, int& h) const
 
 const char* PopupMenu::getButtonLabel(int index) const {
     switch (index) {
-        case 0: return "저장";
+        case 0: return "단어";
         case 1: return "문형";
         default: return "";
     }

@@ -25,6 +25,7 @@
 #include "SleepManager.h"
 #include "SRSManager.h"
 #include "DictionaryManager.h"
+#include "GrammarManager.h"
 
 // ============================================
 // Hardware Configuration
@@ -1007,6 +1008,9 @@ void setup() {
 
     // Initialize Dictionary (optional - fails gracefully if dict files not present)
     DictionaryManager::instance().init();
+
+    // Initialize Grammar database (optional)
+    GrammarManager::instance().init();
 
     // Draw initial screen
     needsFullRedraw = true;

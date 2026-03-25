@@ -1,6 +1,7 @@
 #pragma once
 
 #include <M5Unified.h>
+#include "Config.h"
 
 /**
  * UI Helper functions for consistent styling across the app
@@ -97,6 +98,33 @@ inline void setupJapaneseFont(float size = SIZE_BODY) {
     M5.Display.setFont(&fonts::efontJA_24);
     M5.Display.setTextSize(size);
     M5.Display.setTextColor(TFT_BLACK);
+}
+
+/**
+ * Show progress indicator (non-blocking)
+ * Displays a centered box with message, returns immediately
+ */
+inline void showProgressIndicator(const char* message, int screenWidth = SCREEN_WIDTH, int screenHeight = SCREEN_HEIGHT) {
+    int toastW = 200;
+    int toastH = 50;
+    int toastX = (screenWidth - toastW) / 2;
+    int toastY = (screenHeight - 60 - toastH) / 2;  // 60 = TAB_BAR_HEIGHT
+
+    M5.Display.setEpdMode(epd_mode_t::epd_fastest);
+    M5.Display.startWrite();
+
+    // Draw progress indicator background
+    M5.Display.fillRect(toastX, toastY, toastW, toastH, TFT_WHITE);
+    M5.Display.drawRect(toastX, toastY, toastW, toastH, TFT_BLACK);
+    M5.Display.drawRect(toastX + 1, toastY + 1, toastW - 2, toastH - 2, TFT_BLACK);
+
+    // Draw message centered
+    M5.Display.setFont(&fonts::efontKR_16);
+    M5.Display.setTextColor(TFT_BLACK);
+    M5.Display.setTextDatum(MC_DATUM);
+    M5.Display.drawString(message, toastX + toastW / 2, toastY + toastH / 2);
+
+    M5.Display.endWrite();
 }
 
 } // namespace UI

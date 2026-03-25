@@ -6,6 +6,7 @@
 #include "PopupMenu.h"
 #include "SRSManager.h"
 #include "DictionaryManager.h"
+#include "GrammarManager.h"
 #include "Config.h"
 
 /**
@@ -62,6 +63,11 @@ public:
      * Show toast notification
      */
     void showToast(const char* message, std::function<void()> onRedraw = nullptr);
+
+    /**
+     * Show progress indicator (non-blocking)
+     */
+    void showProgressIndicator(const char* message);
 
     /**
      * Save word to vocabulary (SRS)

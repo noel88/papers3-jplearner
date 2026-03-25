@@ -737,9 +737,11 @@ bool CopyScreen::handleTouchEnd() {
 
         // Show popup with selected text
         if (_textLayout.hasSelection()) {
-            int selX, selY, selW, selH;
-            _textLayout.getSelectionBounds(selX, selY, selW, selH);
-            _popupMenu.show(selX + selW / 2, selY, _textLayout.getSelectedText());
+            // Use midpoint between drag start and end for popup position
+            auto touch = M5.Touch.getDetail();
+            int popupX = (_touchStartX + touch.x) / 2;
+            int popupY = (_touchStartY < touch.y) ? _touchStartY : touch.y;
+            _popupMenu.show(popupX, popupY, _textLayout.getSelectedText());
 
             M5.Display.setEpdMode(epd_mode_t::epd_fastest);
             M5.Display.startWrite();

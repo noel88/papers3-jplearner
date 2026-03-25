@@ -738,9 +738,11 @@ bool ReadScreen::handleTouchEnd() {
             if (_textLayout.hasSelection()) {
                 String selectedText = _textLayout.getSelectedText();
 
-                // Show popup menu at end position
+                // Use midpoint between drag start and end for popup position
                 auto touch = M5.Touch.getDetail();
-                _popupMenu.show(touch.x, touch.y, selectedText);
+                int popupX = (_touchStartX + touch.x) / 2;
+                int popupY = (_touchStartY < touch.y) ? _touchStartY : touch.y;
+                _popupMenu.show(popupX, popupY, selectedText);
 
                 // Redraw with popup
                 M5.Display.setEpdMode(epd_mode_t::epd_fastest);
